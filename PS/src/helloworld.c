@@ -54,14 +54,14 @@
 #include "xil_io.h"
 #include "sleep.h"
 #include "xrfdc.h"
-#include <stdlib.h> // Ìí¼ÓÕâ¸öÍ·ÎÄ¼şÓÃÓÚ atof()
+#include <stdlib.h> // æ·»åŠ è¿™ä¸ªå¤´æ–‡ä»¶ç”¨äº atof()
 
-// ***************** ÓÃ»§ÅäÖÃÇø *****************
+// ***************** ç”¨æˆ·é…ç½®åŒº *****************
 double Mixer_ADC_NCO_Freq;
 double Mixer_DAC_NCO_Freq;
-// ×¢Òâ£ºÒÆ³ıÁËÔ­±¾ÔÚÕâÀïµÄ ADC_FS, DAC_FS, dac_nco_nyquist µÈÈ«¾Ö±äÁ¿£¬Ê¹Æä¸ü¼Ó´¿´â
+// æ³¨æ„ï¼šç§»é™¤äº†åŸæœ¬åœ¨è¿™é‡Œçš„ ADC_FS, DAC_FS, dac_nco_nyquist ç­‰å…¨å±€å˜é‡ï¼Œä½¿å…¶æ›´åŠ çº¯ç²¹
 
-// Ä¿±ê Tile: Tile 229 ¶ÔÓ¦ ID 1
+// ç›®æ ‡ Tile: Tile 229 å¯¹åº” ID 1
 #define TARGET_TILE_ID  1
 // ********************************************
 
@@ -73,19 +73,19 @@ unsigned int LMK04208_CKin[1][26] = {
         0x0021201C,0x0180033D,0x0200033E,0x003F001F }};
 XRFdc RFdcInst;      /* RFdc driver instance */
 
-// Ç°ÖÃÉùÃ÷
+// å‰ç½®å£°æ˜
 void rfdcStartup(u32 *cmdVals);
 
 /******************************************************************************
-* ·â×°ºóµÄ ConfigNCO º¯Êı
-* °üº¬£º¶¯Ì¬»ñÈ¡²ÉÑùÂÊ -> ¼ÆËãÄÎ¿üË¹ÌØÇø -> ÅäÖÃ Nyquist Zone -> ¸üĞÂ NCO ÆµÂÊ
+* å°è£…åçš„ ConfigNCO å‡½æ•°
+* åŒ…å«ï¼šåŠ¨æ€è·å–é‡‡æ ·ç‡ -> è®¡ç®—å¥ˆå¥æ–¯ç‰¹åŒº -> é…ç½® Nyquist Zone -> æ›´æ–° NCO é¢‘ç‡
 *******************************************************************************/
 int ConfigNCO(u32 Type, u32 Tile_Id, u32 Block_Id, double Freq_MHz) {
     int Status;
     XRFdc_Mixer_Settings Mixer_Settings;
     char *typeName = (Type == XRFDC_DAC_TILE) ? "DAC" : "ADC";
 
-    // 1. »ñÈ¡¶ÔÓ¦ Converter µÄ²ÉÑùÂÊ (Hz)
+    // 1. è·å–å¯¹åº” Converter çš„é‡‡æ ·ç‡ (Hz)
     double SampleRate_Hz = 0;
     if (Type == XRFDC_DAC_TILE) {
         SampleRate_Hz = RFdcInst.DAC_Tile[Tile_Id].PLL_Settings.SampleRate * 1e9;
@@ -93,53 +93,53 @@ int ConfigNCO(u32 Type, u32 Tile_Id, u32 Block_Id, double Freq_MHz) {
         SampleRate_Hz = RFdcInst.ADC_Tile[Tile_Id].PLL_Settings.SampleRate * 1e9;
     }
 
-    // 2. ¼ÆËãÄÎ¿üË¹ÌØÇø²¢µ÷Õû NCO ÆµÂÊ
+    // 2. è®¡ç®—å¥ˆå¥æ–¯ç‰¹åŒºå¹¶è°ƒæ•´ NCO é¢‘ç‡
     u32 Nyquist_Zone = 1;
     double Actual_NCO_Freq = Freq_MHz;
 
-    // Èç¹ûÄ¿±êÆµÂÊ´óÓÚµÈÓÚ ²ÉÑùÂÊ/2£¬Ôò´¦ÓÚµÚ¶şÄÎ¿üË¹ÌØÇø
+    // å¦‚æœç›®æ ‡é¢‘ç‡å¤§äºç­‰äº é‡‡æ ·ç‡/2ï¼Œåˆ™å¤„äºç¬¬äºŒå¥ˆå¥æ–¯ç‰¹åŒº
     if ((Actual_NCO_Freq * 1e6) >= (SampleRate_Hz / 2.0)) {
         Nyquist_Zone = 2;
-        Actual_NCO_Freq = -Actual_NCO_Freq; // ´¦ÓÚµÚ¶şÄÎ¿üË¹ÌØÇøÊ±£¬NCOÆµÂÊÈ¡·´
+        Actual_NCO_Freq = -Actual_NCO_Freq; // å¤„äºç¬¬äºŒå¥ˆå¥æ–¯ç‰¹åŒºæ—¶ï¼ŒNCOé¢‘ç‡å–å
     }
 
     xil_printf("  -> Configuring %s Tile %d, Block %d to %d MHz (Nyquist Zone: %d)... ",
                typeName, Tile_Id, Block_Id, (int)Freq_MHz, Nyquist_Zone);
 
-    // 3. »ñÈ¡µ±Ç°»ìÆµÆ÷ÉèÖÃ (ÏÈ Get ÔÙ Set ÊÇÎªÁË±£ÁôÆäËûÄ¬ÈÏÅäÖÃ²»±ä)
+    // 3. è·å–å½“å‰æ··é¢‘å™¨è®¾ç½® (å…ˆ Get å† Set æ˜¯ä¸ºäº†ä¿ç•™å…¶ä»–é»˜è®¤é…ç½®ä¸å˜)
     Status = XRFdc_GetMixerSettings(&RFdcInst, Type, Tile_Id, Block_Id, &Mixer_Settings);
     if (Status != XST_SUCCESS) {
         xil_printf("[FAILED: GetMixer, Error Code: %d]\r\n", Status);
         return XST_FAILURE;
     }
 
-    // 4. ÉèÖÃÄÎ¿üË¹ÌØÇø
+    // 4. è®¾ç½®å¥ˆå¥æ–¯ç‰¹åŒº
     Status = XRFdc_SetNyquistZone(&RFdcInst, Type, Tile_Id, Block_Id, Nyquist_Zone);
     if (Status != XST_SUCCESS) {
         xil_printf("[FAILED: SetNyquistZone, Error Code: %d]\r\n", Status);
         return XST_FAILURE;
     }
 
-    // 5. ĞŞ¸ÄÆµÂÊ¼°»ìÆµÄ£Ê½
-    Mixer_Settings.Freq = Actual_NCO_Freq; // Ğ´Èë¼ÆËãºóµÄÊµ¼Ê NCO ÆµÂÊ
+    // 5. ä¿®æ”¹é¢‘ç‡åŠæ··é¢‘æ¨¡å¼
+    Mixer_Settings.Freq = Actual_NCO_Freq; // å†™å…¥è®¡ç®—åçš„å®é™… NCO é¢‘ç‡
     Mixer_Settings.PhaseOffset = 0;
 
     if (Type == XRFDC_DAC_TILE) {
-        Mixer_Settings.MixerMode = XRFDC_MIXER_MODE_C2R; // DAC Ä£Ê½
+        Mixer_Settings.MixerMode = XRFDC_MIXER_MODE_C2R; // DAC æ¨¡å¼
     } else {
-        Mixer_Settings.MixerMode = XRFDC_MIXER_MODE_R2C; // ADC Ä£Ê½
+        Mixer_Settings.MixerMode = XRFDC_MIXER_MODE_R2C; // ADC æ¨¡å¼
     }
 
     Mixer_Settings.MixerType = XRFDC_MIXER_TYPE_FINE;
 
-    // 6. Ğ´Èë»ìÆµÆ÷ÉèÖÃ
+    // 6. å†™å…¥æ··é¢‘å™¨è®¾ç½®
     Status = XRFdc_SetMixerSettings(&RFdcInst, Type, Tile_Id, Block_Id, &Mixer_Settings);
     if (Status != XST_SUCCESS) {
         xil_printf("[FAILED: SetMixer, Error Code: %d]\r\n", Status);
         return XST_FAILURE;
     }
 
-    // 7. ´¥·¢ÊÂ¼şÊ¹¸üĞÂÉúĞ§
+    // 7. è§¦å‘äº‹ä»¶ä½¿æ›´æ–°ç”Ÿæ•ˆ
     Status = XRFdc_UpdateEvent(&RFdcInst, Type, Tile_Id, Block_Id, XRFDC_EVENT_MIXER);
     if (Status != XST_SUCCESS) {
         xil_printf("[FAILED: UpdateEvent, Error Code: %d]\r\n", Status);
@@ -187,18 +187,18 @@ int main()
     rfdcStartup(NULL);
 
     // ============================================================
-    //  ÅäÖÃ DAC (·¢Éä¶Ë)
+    //  é…ç½® DAC (å‘å°„ç«¯)
     // ============================================================
     xil_printf("\n\r--- Configuring DAC (TX) ---\r\n");
-    Mixer_DAC_NCO_Freq = -1000.0; // Äã¿ÉÒÔÔÚÕâÀïËæÒâĞŞ¸ÄÄ¿±êÆµÂÊ£¬ConfigNCO »á×Ô¶¯´¦Àí
+    Mixer_DAC_NCO_Freq = -1000.0; // ä½ å¯ä»¥åœ¨è¿™é‡Œéšæ„ä¿®æ”¹ç›®æ ‡é¢‘ç‡ï¼ŒConfigNCO ä¼šè‡ªåŠ¨å¤„ç†
 
-    // Ò»¼üµ÷ÓÃ£º×Ô¶¯»ñÈ¡²ÉÑùÂÊ -> ÅĞ¶ÏÄÎ¿üË¹ÌØÇø -> ÅäÖÃ NCO
+    // ä¸€é”®è°ƒç”¨ï¼šè‡ªåŠ¨è·å–é‡‡æ ·ç‡ -> åˆ¤æ–­å¥ˆå¥æ–¯ç‰¹åŒº -> é…ç½® NCO
     ConfigNCO(XRFDC_DAC_TILE, 1, 0, Mixer_DAC_NCO_Freq); // Tile 229, Block 0
     ConfigNCO(XRFDC_DAC_TILE, 1, 2, Mixer_DAC_NCO_Freq); // Tile 229, Block 2
 
 
     // ============================================================
-	//  ÅäÖÃ ADC (½ÓÊÕ¶Ë)
+	//  é…ç½® ADC (æ¥æ”¶ç«¯)
 	// ============================================================
 	xil_printf("\n\r--- Configuring ADC (RX) ---\r\n");
 	Mixer_ADC_NCO_Freq = 2000.0;
@@ -206,58 +206,58 @@ int main()
 	ConfigNCO(XRFDC_ADC_TILE, 0, 1, Mixer_ADC_NCO_Freq);
 
 	/// ============================================================
-    //  ½»»¥Ê½ÊÖ¶¯±äÆµÂß¼­ (ĞŞ¸´°æ)
+    //  äº¤äº’å¼æ‰‹åŠ¨å˜é¢‘é€»è¾‘ (ä¿®å¤ç‰ˆ)
     // ============================================================
     xil_printf("\n\r--- Interactive DAC Frequency Control ---\r\n");
     xil_printf("Ready to receive frequency commands via UART.\r\n");
 
     double target_freq = 0.0;
-    char input_buf[32]; // ½ÓÊÕ»º³å×Ö·û´®
+    char input_buf[32]; // æ¥æ”¶ç¼“å†²å­—ç¬¦ä¸²
     int buf_idx = 0;
     char c;
 
-    /* ½»»¥Ê½Ö÷Ñ­»· */
+    /* äº¤äº’å¼ä¸»å¾ªç¯ */
     while(1) {
         xil_printf("\r\n>> Enter new DAC NCO frequency in MHz: ");
 
         buf_idx = 0;
 
-        // Öğ¸ö×Ö·û¶ÁÈ¡´®¿ÚÊäÈë£¬Ö±µ½°´ÏÂ»Ø³µ
+        // é€ä¸ªå­—ç¬¦è¯»å–ä¸²å£è¾“å…¥ï¼Œç›´åˆ°æŒ‰ä¸‹å›è½¦
         while(1) {
-            c = inbyte(); // ×èÈûµÈ´ı´®¿Ú·¢À´Ò»¸ö×Ö·û
+            c = inbyte(); // é˜»å¡ç­‰å¾…ä¸²å£å‘æ¥ä¸€ä¸ªå­—ç¬¦
 
-            // ´¦ÀíÍË¸ñ¼ü (Backspace)
+            // å¤„ç†é€€æ ¼é”® (Backspace)
             if (c == '\b' || c == 0x7F) {
                 if (buf_idx > 0) {
-                    outbyte('\b'); outbyte(' '); outbyte('\b'); // ÔÚÖÕ¶ËÉÏÄ¨µô×Ö·û
+                    outbyte('\b'); outbyte(' '); outbyte('\b'); // åœ¨ç»ˆç«¯ä¸ŠæŠ¹æ‰å­—ç¬¦
                     buf_idx--;
                 }
                 continue;
             }
 
-            // »ØÏÔ×Ö·ûµ½ÖÕ¶Ë£¬ÈÃÄãÄÜ¿´µ½×Ô¼ºÊäÈëÁËÊ²Ã´
+            // å›æ˜¾å­—ç¬¦åˆ°ç»ˆç«¯ï¼Œè®©ä½ èƒ½çœ‹åˆ°è‡ªå·±è¾“å…¥äº†ä»€ä¹ˆ
             outbyte(c);
 
-            // Èç¹û°´ÏÂ»Ø³µ¼ü ('\r' »ò '\n')£¬Ôò½áÊø±¾´ÎÊäÈë
+            // å¦‚æœæŒ‰ä¸‹å›è½¦é”® ('\r' æˆ– '\n')ï¼Œåˆ™ç»“æŸæœ¬æ¬¡è¾“å…¥
             if (c == '\r' || c == '\n') {
-                input_buf[buf_idx] = '\0'; // ¸ø×Ö·û´®¼ÓÉÏ½áÊø·û
+                input_buf[buf_idx] = '\0'; // ç»™å­—ç¬¦ä¸²åŠ ä¸Šç»“æŸç¬¦
                 break;
             }
 
-            // ´æÈë»º³åÇø (·ÀÖ¹Òç³ö)
+            // å­˜å…¥ç¼“å†²åŒº (é˜²æ­¢æº¢å‡º)
             if (buf_idx < 31) {
                 input_buf[buf_idx++] = c;
             }
         }
 
-        // Ö»ÓĞµ±ÓÃ»§È·ÊµÊäÈëÁËÄÚÈİÊ±£¬²Å½øĞĞ´¦Àí
+        // åªæœ‰å½“ç”¨æˆ·ç¡®å®è¾“å…¥äº†å†…å®¹æ—¶ï¼Œæ‰è¿›è¡Œå¤„ç†
         if (buf_idx > 0) {
-            // ½«×Ö·û´®×ª»»Îª double Ë«¾«¶È¸¡µãÊı
+            // å°†å­—ç¬¦ä¸²è½¬æ¢ä¸º double åŒç²¾åº¦æµ®ç‚¹æ•°
             target_freq = atof(input_buf);
 
             xil_printf("\n\rReceived request to change to: %d MHz\r\n", (int)target_freq);
 
-            // ¸üĞÂµ×²ãÓ²¼ş
+            // æ›´æ–°åº•å±‚ç¡¬ä»¶
             ConfigNCO(XRFDC_DAC_TILE, 1, 0, target_freq);
             ConfigNCO(XRFDC_DAC_TILE, 1, 2, target_freq);
 
@@ -270,7 +270,7 @@ int main()
 }
 
 //    /// ============================================================
-//    //  ÅäÖÃ ADC (½ÓÊÕ¶Ë)
+//    //  é…ç½® ADC (æ¥æ”¶ç«¯)
 //    // ============================================================
 //    xil_printf("\n\r--- Configuring ADC (RX) ---\r\n");
 //    Mixer_ADC_NCO_Freq = 2000.0;
@@ -278,46 +278,46 @@ int main()
 //    ConfigNCO(XRFDC_ADC_TILE, 0, 1, Mixer_ADC_NCO_Freq);
 //
 //    // ============================================================
-//    //  ¶¯Ì¬Á¬ĞøÉ¨ÆµÂß¼­ (È¡´úÔ­À´µÄËÀÑ­»·)
+//    //  åŠ¨æ€è¿ç»­æ‰«é¢‘é€»è¾‘ (å–ä»£åŸæ¥çš„æ­»å¾ªç¯)
 //    // ============================================================
 //    xil_printf("\n\r--- Starting Continuous DAC Frequency Sweep ---\r\n");
 //
-//    // ÉèÖÃÉ¨Æµ²ÎÊı
-//    double start_freq = -1000.0;  // ÆğÊ¼ÆµÂÊ (MHz)
-//    double stop_freq  = -2600.0;   // ÖÕÖ¹ÆµÂÊ (MHz)
-//    double step_freq  = 20.0;     // Ã¿´Î²½½øÆµÂÊ (MHz)
+//    // è®¾ç½®æ‰«é¢‘å‚æ•°
+//    double start_freq = -1000.0;  // èµ·å§‹é¢‘ç‡ (MHz)
+//    double stop_freq  = -2600.0;   // ç»ˆæ­¢é¢‘ç‡ (MHz)
+//    double step_freq  = 20.0;     // æ¯æ¬¡æ­¥è¿›é¢‘ç‡ (MHz)
 //    double current_freq = start_freq;
 //
-//    // ÉùÃ÷½á¹¹ÌåÓÃÓÚ¾²Ä¬¸üĞÂ
+//    // å£°æ˜ç»“æ„ä½“ç”¨äºé™é»˜æ›´æ–°
 //    XRFdc_Mixer_Settings Mixer_Settings_B0;
 //    XRFdc_Mixer_Settings Mixer_Settings_B2;
 //
-//    // ÔÚ½øÈë¸ßËÙÑ­»·Ç°£¬ÏÈ»ñÈ¡ Tile 1 Block 0 ºÍ Block 2 µÄÏÖÓĞÅäÖÃ
+//    // åœ¨è¿›å…¥é«˜é€Ÿå¾ªç¯å‰ï¼Œå…ˆè·å– Tile 1 Block 0 å’Œ Block 2 çš„ç°æœ‰é…ç½®
 //    XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, 1, 0, &Mixer_Settings_B0);
 //    XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, 1, 2, &Mixer_Settings_B2);
 //
-//    /* ¸ßËÙÉ¨ÆµÑ­»· */
+//    /* é«˜é€Ÿæ‰«é¢‘å¾ªç¯ */
 //    while(1) {
-//        // --- ¸üĞÂ Block 0 ---
+//        // --- æ›´æ–° Block 0 ---
 //        Mixer_Settings_B0.Freq = current_freq;
 //        XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, 1, 0, &Mixer_Settings_B0);
 //        XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, 1, 0, XRFDC_EVENT_MIXER);
 //
-//        // --- ¸üĞÂ Block 2 ---
+//        // --- æ›´æ–° Block 2 ---
 //        Mixer_Settings_B2.Freq = current_freq;
 //        XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, 1, 2, &Mixer_Settings_B2);
 //        XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, 1, 2, XRFDC_EVENT_MIXER);
 //
-//        // --- ¼ÆËãÏÂÒ»¸öÆµµã ---
+//        // --- è®¡ç®—ä¸‹ä¸€ä¸ªé¢‘ç‚¹ ---
 //        current_freq -= step_freq;
 //        if (current_freq < stop_freq) {
 //            current_freq = start_freq;
-//            // Ã¿É¨ÍêÒ»ÂÖ£¬ÔÚ´®¿Ú´òÓ¡Ò»´ÎÌáÊ¾£¬×÷Îª±£»îĞÄÌø
+//            // æ¯æ‰«å®Œä¸€è½®ï¼Œåœ¨ä¸²å£æ‰“å°ä¸€æ¬¡æç¤ºï¼Œä½œä¸ºä¿æ´»å¿ƒè·³
 //            xil_printf("Sweep restarted from %d MHz\r\n", (int)start_freq);
 //        }
 //
-//        // --- ÑÓÊ±¿ØÖÆ ---
-//        // ÑÓÊ± 50000 Î¢Ãë (50 ºÁÃë)¡£ÅäºÏÆµÆ×ÒÇµÄ Sweep Time ¿ÉÒÔ¿´µ½Æ½»¬ÒÆ¶¯µÄ·åÖµ
+//        // --- å»¶æ—¶æ§åˆ¶ ---
+//        // å»¶æ—¶ 50000 å¾®ç§’ (50 æ¯«ç§’)ã€‚é…åˆé¢‘è°±ä»ªçš„ Sweep Time å¯ä»¥çœ‹åˆ°å¹³æ»‘ç§»åŠ¨çš„å³°å€¼
 //        usleep(500000);
 //    }
 //

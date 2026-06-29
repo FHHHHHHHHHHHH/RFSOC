@@ -1,11 +1,13 @@
 # -------------------------------------------------------------------------
-# 1. 忽略 VIO 到相位累加器 phase_reg 的跨时钟域路径 (修复图1)
+# 1. 忽略 VIO 到 相位累加器 以及 幅度控制模块 的跨时钟域路径 (修复新引入的时序错误)
 # -------------------------------------------------------------------------
-set_false_path -from [get_cells -hierarchical -filter {NAME =~ "*vio_0*Probe_out_reg*"}] -to [get_cells -hierarchical -filter {NAME =~ "*dds_mixer_adapter*phase_reg*"}]
+# 1. 全局忽略 VIO 调试信号的跨时钟域路径（动态相位、动态幅度因子等）
+set_false_path -from [get_cells -hierarchical -filter {NAME =~ "*Probe_out_reg*"}]
+
 
 # -------------------------------------------------------------------------
-# 2. 忽略 proc_sys_reset_0 到 DDS Adapter 的跨时钟域复位路径 (修复图2)
-# 注：更规范的做法是在 BD 中添加同源时钟的复位同步器
+# 2. 忽略 proc_sys_reset_0 到 DDS Adapter 的跨时钟域复位路径
+# 注：如果你已经按照上一步提示在 BD 里加了专用的复位同步器，此条约束会自动失效或可删去
 # -------------------------------------------------------------------------
 set_false_path -from [get_cells -hierarchical -filter {NAME =~ "*proc_sys_reset_0*ACTIVE_LOW_PR_OUT_DFF*"}] -to [get_cells -hierarchical -filter {NAME =~ "*dds_mixer_adapter*"}]
 

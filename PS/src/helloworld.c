@@ -297,7 +297,7 @@ void rfdcStartup (u32 *cmdVals) {
 			} else {
 				XRFdc_StartUp(RFdcInstPtr, 0, Tile_Id);
 				usleep(200000);
-			}
+			} 
 		}
 	}
 

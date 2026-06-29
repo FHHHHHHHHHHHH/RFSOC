@@ -14,6 +14,8 @@
 #include "sleep.h"
 #include "xrfdc.h"
 #include <stdlib.h>
+#include "xllfifo.h"
+XLlFifo FifoInstance;
 
 // ***************** 用户配置区 *****************
 double Mixer_ADC_NCO_Freq;
@@ -130,6 +132,21 @@ int main()
     LMX2594ClockConfig(1, 5898240);          // 设定 DAC/ADC 采样率时钟
     xil_printf("  The clocks are now programmed.\r\n");
 
+
+    /* 0629 初始化 AXI4-Stream FIFO */
+	XLlFifo_Config *FifoConfig;
+	// 这里的宏定义名称可能因你的 BD 命名而异，通常是 XPAR_AXI_FIFO_0_DEVICE_ID
+	FifoConfig = XLlFfio_LookupConfig(XPAR_AXI_FIFO_0_DEVICE_ID);
+	if (!FifoConfig) {
+		xil_printf("No FIFO config found.\r\n");
+		return XST_FAILURE;
+	}
+	Status = XLlFifo_CfgInitialize(&FifoInstance, FifoConfig, FifoConfig->BaseAddress);
+	if (Status != XST_SUCCESS) {
+		xil_printf("FIFO Initialization failed\n\r");
+		return XST_FAILURE;
+	}
+
     /* 初始化 RFdc 驱动 */
     ConfigPtr = XRFdc_LookupConfig(RFDC_DEVICE_ID);
     if (ConfigPtr == NULL) { return XST_FAILURE; }
@@ -140,28 +157,38 @@ int main()
     rfdcStartup(NULL);
 
     // ============================================================
-    // 动作 1：开机全自动【同Tile同步】初始化两路 DAC 到 2400 MHz (2.4GHz)
-    // ============================================================
-    xil_printf("\n\r--- Synchronous DAC (TX) Initialization (2.4GHz) ---\r\n");
-    Mixer_DAC_NCO_Freq = 2400.0; // 直接设定射频直采发射目标为 2400MHz
+	// 动作 1：开机全自动【同Tile同步】初始化两路 DAC 到 2400 MHz (2.4GHz)
+	// ============================================================
+	xil_printf("\n\r--- Synchronous DAC (TX) Initialization (2.4GHz) ---\r\n");
+	Mixer_DAC_NCO_Freq = 2400.0; // 直接设定射频直采发射目标为 2400MHz
 
-    // 1. 静默配置 Block 0
-    XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
-    Mixer_Settings.Freq = Mixer_DAC_NCO_Freq;
-    Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE; // 锁定 Tile 级触发源
-    XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
+	// 动态计算奈奎斯特区与实际 NCO 频率（2.4GHz 此时处于第一区）
+	double SampleRate_Hz = RFdcInst.DAC_Tile[TARGET_TILE_ID].PLL_Settings.SampleRate * 1e9;
+	u32 Nyquist_Zone = 1;
+	double Actual_NCO_Freq = Mixer_DAC_NCO_Freq;
+	if ((Actual_NCO_Freq * 1e6) >= (SampleRate_Hz / 2.0)) {
+		Nyquist_Zone = 2;
+		Actual_NCO_Freq = -Actual_NCO_Freq; // 偶数区需反转频率
+	}
 
-    // 2. 静默配置 Block 2 并直接赋予开机基础对齐相位 (例如 0.0 度，后续可交互微调)
-    XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
-    Mixer_Settings.Freq = Mixer_DAC_NCO_Freq;
-    Mixer_Settings.PhaseOffset = 0.0;
-    Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE; // 锁定 Tile 级触发源
-    XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+	// 1. 静默配置 Block 0 (DAC0)
+	XRFdc_SetNyquistZone(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, Nyquist_Zone);
+	XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
+	Mixer_Settings.Freq = Actual_NCO_Freq;
+	Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE; // 锁定 Tile 级触发源
+	XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
 
-    // 3. 统一触发：让 Block 0 和 Block 2 在同一个射频时钟沿无缝同步起振
-    XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
-    xil_printf("  -> Both DAC Channels successfully initialized to 2.4GHz synchronously!\r\n");
+	// 2. 静默配置 Block 1 (DAC1) 并直接赋予开机基础对齐相位
+	XRFdc_SetNyquistZone(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, Nyquist_Zone);
+	XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
+	Mixer_Settings.Freq = Actual_NCO_Freq;
+	Mixer_Settings.PhaseOffset = 0.0;                 // 初始相位差为 0
+	Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE; // 锁定 Tile 级触发源
+	XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
 
+	// 3. 统一触发：让 Block 0 和 Block 1 在同一个射频时钟沿无缝同步起振
+	XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
+	xil_printf("  -> Both DAC0 and DAC1 successfully initialized to 2.4GHz synchronously!\r\n");
 
     // ============================================================
 	//  配置 ADC (接收端保持不变)
@@ -180,82 +207,136 @@ int main()
     xil_printf("  Type 'F <freq>' to change both carriers seamlessly (e.g., F 2450)\r\n");
     xil_printf("  Type 'P <phase>' to shift Block 2 relative to Block 0 (e.g., P 90)\r\n");
 
-    double target_val = 0.0;
-    char input_buf[32];
-    int buf_idx = 0;
-    char c;
-    char mode = 'F';
 
-    while(1) {
-        xil_printf("\r\n>> Enter Cmd (F/P value): ");
-        buf_idx = 0;
-        mode = ' ';
+    // ==========================================================
+	// 串口交互终端主循环 (应该放在 main 函数末尾的无限循环中)
+	// ==========================================================
+    while (1) {
 
-        while(1) {
+        char input_buf[32] = {0};
+        int buf_idx = 0;
+        char c;
+
+        xil_printf("\r\n>> Enter Cmd (F/P/T value): ");
+
+        // =========================
+        // 1. 接收输入
+        // =========================
+        while (1) {
             c = inbyte();
+
+            if (c == '\r' || c == '\n') {
+                break;
+            }
+
             if (c == '\b' || c == 0x7F) {
                 if (buf_idx > 0) {
-                    outbyte('\b'); outbyte(' '); outbyte('\b');
                     buf_idx--;
+                    xil_printf("\b \b");
                 }
                 continue;
             }
-            outbyte(c);
-            if (c == '\r' || c == '\n') {
-                input_buf[buf_idx] = '\0';
-                break;
-            }
-            if (buf_idx == 0 && (c == 'F' || c == 'f' || c == 'P' || c == 'p')) {
-                mode = (c == 'f') ? 'F' : ((c == 'p') ? 'P' : c);
-            }
-            if (buf_idx < 31) {
+
+            if (buf_idx < sizeof(input_buf) - 1) {
                 input_buf[buf_idx++] = c;
+                outbyte(c);
             }
         }
 
-        if (buf_idx > 1) {
-            char *val_str = input_buf + 1;
-            while(*val_str == ' ') val_str++;
-            target_val = atof(val_str);
+        input_buf[buf_idx] = '\0';
 
-            // -------------------------------------------------------------
-            // 处理变频指令 'F'：利用 TILE 触发机制，两路同步无抖动变频
-            // -------------------------------------------------------------
-            if (mode == 'F') {
-                xil_printf("\n\r[System] Synchronously changing Freq to: %d MHz\r\n", (int)target_val);
+        // =========================
+        // 2. 跳过前导空格
+        // =========================
+        int i = 0;
+        while (input_buf[i] == ' ' && input_buf[i] != '\0') {
+            i++;
+        }
 
-                // 配置 Block 0 (仅改频率，锁死 Tile 触发)
-                XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
-                Mixer_Settings.Freq = target_val;
-                Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
-                XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
+        if (input_buf[i] == '\0') {
+            continue;
+        }
 
-                // 配置 Block 2 (仅改频率，锁死 Tile 触发，保留当前绝对相位)
-                XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
-                Mixer_Settings.Freq = target_val;
-                Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
-                XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+        // =========================
+        // 3. 解析命令
+        // =========================
+        char mode = input_buf[i];
 
-                // 统一开火：一针见血，彻底消除微秒级软件延迟
-                XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
-                xil_printf("[System] Both NCO frequencies updated at the same clock edge! [OK]\r\n");
+        if (mode >= 'a' && mode <= 'z') {
+            mode -= 32;
+        }
+
+        char *msg_str = input_buf + i + 1;
+
+        while (*msg_str == ' ') {
+            msg_str++;
+        }
+
+        double target_val = 0.0;
+
+        if (strlen(msg_str) > 0) {
+            target_val = atof(msg_str);
+        }
+
+        // =========================
+        // 4. 执行命令
+        // =========================
+
+        if (mode == 'F') {
+
+            xil_printf("\r\n[CMD] Freq = %.3f MHz\r\n", target_val);
+
+            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
+            Mixer_Settings.Freq = target_val;
+            Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
+            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
+
+            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            Mixer_Settings.Freq = target_val;
+            Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
+            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+
+            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
+
+            xil_printf("[OK] Frequency updated\r\n");
+        }
+
+        else if (mode == 'P') {
+
+            xil_printf("\r\n[CMD] Phase = %.2f deg\r\n", target_val);
+
+            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            Mixer_Settings.PhaseOffset = target_val;
+            Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
+            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+
+            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
+
+            xil_printf("[OK] Phase updated\r\n");
+        }
+
+        else if (mode == 'T') {
+
+            int len = strlen(msg_str);
+
+            if (len <= 0) {
+                xil_printf("\r\n[ERR] T missing payload\r\n");
+                continue;
             }
 
-            // -------------------------------------------------------------
-            // 处理变相指令 'P'：仅调整 Block 2 的绝对相位
-            // -------------------------------------------------------------
-            else if (mode == 'P') {
-                xil_printf("\n\r[System] Updating Phase of Block 2 to: %d Deg\r\n", (int)target_val);
+            if (XLlFifo_TxVacancy(&FifoInstance) >= len) {
+                XLlFifo_Write(&FifoInstance, msg_str, len);
+                XLlFifo_TxSetLen(&FifoInstance, len);
 
-                XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
-                Mixer_Settings.PhaseOffset = target_val;          // 写入新相位
-                Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE; // 维持 Tile 级触发源
-                XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
-
-                // 触发更新
-                XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
-                xil_printf("[System] Phase adjusted successfully. [OK]\r\n");
+                xil_printf("\r\n[OK] TX %d bytes: %s\r\n", len, msg_str);
+            } else {
+                xil_printf("\r\n[ERR] FIFO full\r\n");
             }
+        }
+
+        else {
+            xil_printf("\r\n[ERR] Unknown cmd: %c\r\n", mode);
+            xil_printf("      Use F <freq>, P <phase>, T <data>\r\n");
         }
     }
 
@@ -297,7 +378,7 @@ void rfdcStartup (u32 *cmdVals) {
 			} else {
 				XRFdc_StartUp(RFdcInstPtr, 0, Tile_Id);
 				usleep(200000);
-			} 
+			}
 		}
 	}
 

@@ -283,18 +283,17 @@ int main()
         // =========================
 
         if (mode == 'F') {
-
-            xil_printf("\r\n[CMD] Freq = %.3f MHz\r\n", target_val);
+        	xil_printf("\r\n[CMD] Freq = %s MHz\r\n", msg_str);
 
             XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
             Mixer_Settings.Freq = target_val;
             Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
             XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, &Mixer_Settings);
 
-            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
             Mixer_Settings.Freq = target_val;
             Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
-            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
 
             XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
 
@@ -303,12 +302,12 @@ int main()
 
         else if (mode == 'P') {
 
-            xil_printf("\r\n[CMD] Phase = %.2f deg\r\n", target_val);
+            xil_printf("\r\n[CMD] Phase = %s deg\r\n", msg_str);
 
-            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            XRFdc_GetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
             Mixer_Settings.PhaseOffset = target_val;
             Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
-            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 2, &Mixer_Settings);
+            XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 1, &Mixer_Settings);
 
             XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
 
@@ -333,6 +332,24 @@ int main()
                 xil_printf("\r\n[ERR] FIFO full\r\n");
             }
         }
+
+        // 在 if (mode == 'T') 的同级，加上这段代码
+		else if (mode == 'C') {
+			int len = strlen(msg_str);
+			if (len > 0) {
+				xil_printf("\r\n[System] WARNING: Entering CONTINUOUS TX MODE!\r\n");
+				xil_printf("[System] Sending %d bytes FOREVER. Reboot board to stop.\r\n", len);
+
+				// 死循环：疯狂往 FIFO 灌入基带数据
+				while(1) {
+					if (XLlFifo_TxVacancy(&FifoInstance) > 0) {
+						XLlFifo_Write(&FifoInstance, msg_str, len);
+						XLlFifo_TxSetLen(&FifoInstance, len);
+						usleep(10); // 微小延时，防止 ARM 彻底卡死
+					}
+				}
+			}
+		}
 
         else {
             xil_printf("\r\n[ERR] Unknown cmd: %c\r\n", mode);

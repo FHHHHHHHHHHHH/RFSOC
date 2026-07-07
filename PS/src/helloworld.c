@@ -154,27 +154,26 @@ int main()
     // ============================================================
     xil_printf("\n\r--- Synchronized Interactive DAC Control ---\r\n");
     xil_printf("Ready to receive commands.\r\n");
-    xil_printf("  Type 'F <freq>' to change both carriers seamlessly (e.g., F 2450)\r\n");
-    xil_printf("  Type 'P <phase>' to shift Block 2 relative to Block 0 (e.g., P 90)\r\n");
-    xil_printf("  Type 'T <massage>' to send message through FIFO and DAC by bpsk (e.g., T 1100101011)\r\n");
-    xil_printf("  Type 'C <massage>' to send message through FIFO and DAC by bpsk const (e.g., C 1100101011)\r\n");
-
+    xil_printf("  Type 'DACF <freq>' to set DAC NCO frequency (e.g., DACF 100)\r\n");
+    xil_printf("  Type 'ADCF <freq>' to set ADC NCO frequency (e.g., ADCF 100)\r\n");
+    xil_printf("  Type 'AMPL <scale>' to adjust DAC output amplitude (0.0 to 1.0)\r\n");
+    xil_printf("  Type 'PASE <phase>' to set DAC Block 1 phase offset (degrees)\r\n");
+    xil_printf("  Type 'TRAS <data>' to transmit data via FIFO (e.g., TRAS 010101)\r\n");
+    xil_printf("  Type 'COST <data>' to continuously transmit data via FIFO (e.g., COST 010101)\r\n");
 
     // ==========================================================
 	// 串口交互终端主循环 (应该放在 main 函数末尾的无限循环中)
 	// ==========================================================
     while (1) {
-
         char input_buf[32] = {0};
         int buf_idx = 0;
         char c;
-        xil_printf("\r\n>> Enter Cmd (F/P/T value): ");
+        xil_printf("\r\n>> Enter Cmd (DACF/ADCF/PASE/TRAS/COST value): ");
         // =========================
         // 1. 接收输入
         // =========================
         while (1) {
             c = inbyte();
-
             if (c == '\r' || c == '\n') {
                 break;
             }
@@ -201,61 +200,132 @@ int main()
         if (input_buf[i] == '\0') {
             continue;
         }
-        // =========================
-        // 3. 解析命令
-        // =========================
-        char mode = input_buf[i];
-        if (mode >= 'a' && mode <= 'z') {
-            mode -= 32;
-        }
-        char *msg_str = input_buf + i + 1;
-        while (*msg_str == ' ') {
-            msg_str++;
-        }
-        double target_val = 0.0;
 
-        if (strlen(msg_str) > 0) {
-            target_val = atof(msg_str);
-        }
+        // =========================
+		// 3. 解析命令与参数 (修复核心)
+		// =========================
+		char *cmd_start = &input_buf[i];
+
+		// 将整个输入统一转换为大写，这样输入 "pase 90" 也能正常识别
+		for (int j = 0; cmd_start[j] != '\0'; j++) {
+			if (cmd_start[j] >= 'a' && cmd_start[j] <= 'z') {
+				cmd_start[j] -= 32;
+			}
+		}
+
+		// 统一提取参数：因为现在所有命令统一是 4 个字母，直接偏移 4 个字节即可
+		char *msg_str = "";
+		double target_val = 0.0;
+
+		if (strlen(cmd_start) > 4) {
+			msg_str = cmd_start + 4;
+			// 跳过命令和数值之间的空格
+			while (*msg_str == ' ') {
+				msg_str++;
+			}
+			// 将参数字符串转为浮点数备用
+			if (strlen(msg_str) > 0) {
+				target_val = atof(msg_str);
+			}
+		}
+
+
         // =========================
         // 4. 执行命令
         // =========================
-        if (mode == 'F') {
-        	xil_printf("\r\n[CMD] Freq = %s MHz\r\n", msg_str);
-
-        	// ==========================================
-			// 1. 配置并更新 DAC (发射端) NCO
-			// ==========================================
+        // DACF 模式：同时调整 DAC Block 0 和 Block 1 的 NCO 频率
+        if (strncmp(cmd_start, "DACF", 4) == 0) {
+            // 指针跳过 "DACF" 4个字符，指向数值部分
+            msg_str = cmd_start + 4;
+            // 跳过命令和数值之间的空格
+            while (*msg_str == ' ') {
+                msg_str++;
+            }
+            if (strlen(msg_str) > 0) {
+                target_val = atof(msg_str);
+            }
+            xil_printf("\r\n[CMD] DAC Freq = %s MHz\r\n", msg_str);
+            // ==========================================
+            // 1. 配置并更新 DAC (发射端) NCO
+            // ==========================================
             ConfigNCO(XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 0, target_val);
             ConfigNCO(XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 1, target_val);
             // 统一发出事件脉冲，触发同一 Tile 下的两个 Mixer 严格在同时更新！
-            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, ADC_TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
-            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, ADC_TARGET_TILE_ID, 1, XRFDC_EVENT_MIXER);
+            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
+            XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 1, XRFDC_EVENT_MIXER);
+            xil_printf("[OK] DAC Frequency updated to %d MHz!\r\n", (int)target_val);
+        }
+        // ADCF 模式：同时调整 ADC Block 0 和 Block 1 的 NCO 频率
+        else if (strncmp(cmd_start, "ADCF", 4) == 0) {
+            // 指针跳过 "ADCF" 4个字符，指向数值部分
+            msg_str = cmd_start + 4;
+
+            // 跳过命令和数值之间的空格
+            while (*msg_str == ' ') {
+                msg_str++;
+            }
+
+            if (strlen(msg_str) > 0) {
+                target_val = atof(msg_str);
+            }
+
+            xil_printf("\r\n[CMD] ADC Freq = %s MHz\r\n", msg_str);
+
             // ==========================================
-			// 2. 同步配置并更新 ADC (接收端) NCO
-			// ==========================================
-			ConfigNCO(XRFDC_ADC_TILE, ADC_TARGET_TILE_ID, 0, target_val);
+            // 2. 同步配置并更新 ADC (接收端) NCO
+            // ==========================================
+            ConfigNCO(XRFDC_ADC_TILE, ADC_TARGET_TILE_ID, 0, target_val);
             ConfigNCO(XRFDC_ADC_TILE, ADC_TARGET_TILE_ID, 1, target_val);
+
             XRFdc_UpdateEvent(&RFdcInst, XRFDC_ADC_TILE, ADC_TARGET_TILE_ID, 0, XRFDC_EVENT_MIXER);
             XRFdc_UpdateEvent(&RFdcInst, XRFDC_ADC_TILE, ADC_TARGET_TILE_ID, 1, XRFDC_EVENT_MIXER);
-            // ==========================================
-            // 3. 输出提示信息
-            // ==========================================
-			xil_printf("[OK] DAC & ADC Frequency synchronously updated to %d MHz!\r\n", (int)target_val);
 
+            xil_printf("[OK] ADC Frequency updated to %d MHz!\r\n", (int)target_val);
         }
+        // AMPL 模式：调整 DAC 输出幅度，范围 0.0 到 1.0
+        else if (strncmp(cmd_start, "AMPL", 4) == 0) {
+			// target_val 输入范围：0.0 (完全静音) 到 1.0 (100% 满幅度)
+			if(target_val < 0.0) target_val = 0.0;
+			if(target_val > 1.0) target_val = 1.0;
+			xil_printf("\r\n[CMD] Adjusting DAC Output Amplitude to: %s (Scale Factor)\r\n", msg_str);
+
+			XRFdc_QMC_Settings QMC_Settings;
+
+			// 配置通道 0
+			XRFdc_GetQMCSettings(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 0, &QMC_Settings);
+			QMC_Settings.EnableGain = 1;
+			QMC_Settings.GainCorrectionFactor = target_val;
+			QMC_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
+			XRFdc_SetQMCSettings(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 0, &QMC_Settings);
+
+			// 配置通道 1
+			XRFdc_GetQMCSettings(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 1, &QMC_Settings);
+			QMC_Settings.EnableGain = 1;
+			QMC_Settings.GainCorrectionFactor = target_val;
+			QMC_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
+			XRFdc_SetQMCSettings(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 1, &QMC_Settings);
+
+			// 统一触发配置生效
+			XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 0, XRFDC_EVENT_QMC);
+			XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, 1, XRFDC_EVENT_QMC);
+
+			xil_printf("[OK] Output Amplitude updated to %.2f x Full Scale!\r\n", target_val);
+		}
         // P 模式：相位调整模式，调整 DAC Block 1 相对于 Block 0 的相位差
-        else if (mode == 'P') {
-            xil_printf("\r\n[CMD] Phase = %s deg\r\n", msg_str);
-            XRFdc_GetMixerSettings(&RFdcInst, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, 1, &Mixer_Settings);
-            Mixer_Settings.PhaseOffset = target_val;
-            Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
-            XRFdc_SetMixerSettings(&RFdcInst, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, 1, &Mixer_Settings);
-            XRFdc_UpdateEvent(&RFdcInst, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, 1, XRFDC_EVENT_MIXER);
-            xil_printf("[OK] Phase updated\r\n");
-        }
+        else if (strncmp(cmd_start, "PASE", 4) == 0) {
+                xil_printf("\r\n[CMD] Phase = %s deg\r\n", msg_str);
+                XRFdc_GetMixerSettings(&RFdcInst, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, 1, &Mixer_Settings);
+                Mixer_Settings.PhaseOffset = target_val;
+                Mixer_Settings.EventSource = XRFDC_EVNT_SRC_TILE;
 
-        else if (mode == 'T') {
+                // 【已修复参数错位 Bug】：补充了缺失的 XRFDC_DAC_TILE 参数
+				XRFdc_SetMixerSettings(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, &Mixer_Settings);
+				// 【已修复参数错位 Bug】
+				XRFdc_UpdateEvent(&RFdcInst, XRFDC_DAC_TILE, DAC_TARGET_TILE_ID, DAC_TARGET_BLOCK_ID_1, XRFDC_EVENT_MIXER);
+                xil_printf("[OK] Phase updated\r\n");
+        }
+        // T 模式：发送数据模式，将输入的二进制字符串通过 FIFO 发送出去
+        else if (strncmp(cmd_start, "TRAS", 4) == 0) {
             int len = strlen(msg_str);
             if (len <= 0) {
                 xil_printf("\r\n[ERR] T missing payload\r\n");
@@ -269,9 +339,8 @@ int main()
                 xil_printf("\r\n[ERR] FIFO full\r\n");
             }
         }
-
         // C 模式：连续发送模式，死循环往 FIFO 灌入数据
-		else if (mode == 'C') {
+		else if (strncmp(cmd_start, "COST", 4) == 0) {
 			int len = strlen(msg_str);
 			if (len > 0) {
 				xil_printf("\r\n[System] WARNING: Entering CONTINUOUS TX MODE!\r\n");
@@ -286,12 +355,12 @@ int main()
 				}
 			}
 		}
+        // 未知命令处理
         else {
-            xil_printf("\r\n[ERR] Unknown cmd: %c\r\n", mode);
+            xil_printf("\r\n[ERR] Unknown cmd: %c\r\n", cmd_start);
             xil_printf("      Use F <freq>, P <phase>, T <data>\r\n");
         }
     }
-
 	cleanup_platform();
 	return 0;
 }

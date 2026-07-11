@@ -1,0 +1,76 @@
+# Vivado temporary and generated directories
+.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+
+# Vivado logs, journals and temporary files
+*.jou
+*.log
+*.str
+*.tmp
+*.backup.*
+vivado_pid*.str
+webtalk*.jou
+webtalk*.log
+
+# Vivado generated reports and databases
+*.dcp
+*.pb
+*.wdb
+*.wcfg
+*.vcd
+*.saif
+*.rpt
+*.rpx
+
+# Generated programming outputs (uncomment if you want to version them)
+*.bit
+*.bin
+*.ltx
+
+# Keep the hardware handoff used by Vitis
+!*.xsa
+
+# Vitis workspace metadata
+ws/.metadata/
+ws/RemoteSystemsTempFiles/
+ws/.analytics
+ws/IDE.log
+
+# Vitis generated platform/system projects
+ws/*_system/
+ws/*/Debug/
+ws/*/Release/
+ws/*/_ide/
+ws/*/build/
+ws/*/.settings/
+ws/*/.project
+ws/*/.cproject
+
+# C/C++ build products
+*.o
+*.obj
+*.d
+*.a
+*.so
+*.elf
+*.map
+*.dep
+
+# Python/editor/OS files
+__pycache__/
+*.py[cod]
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ILA captures and large local measurements
+*.ila
+*.csv
+

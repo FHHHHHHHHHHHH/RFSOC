@@ -702,7 +702,7 @@ void LMK04208ClockConfig(int XIicBus, unsigned int LMK04208_CKin[1][26])
 * @note   	None
 *
 ****************************************************************************/
-void LMX2594ClockConfig(int XIicBus, int XFrequency)
+int LMX2594ClockConfig(int XIicBus, int XAdcFrequency, int XDacFrequency)
 {
 #ifdef __BAREMETAL__
 	XIicPs_Config *Config_iic;
@@ -711,36 +711,51 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	u8 rx_array[10];
 	u32 ClkRate = 100000;
 	int Index;
-	int freq_index=0;
+	int adc_freq_index = -1;
+	int dac_freq_index = -1;
 	int XFreqIndex;
 
-	for(XFreqIndex=0 ; XFreqIndex<20; XFreqIndex++) {
-		if (ClockingLmx[XFreqIndex].XFrequency == XFrequency) {
-			freq_index =XFreqIndex;
-			xil_printf("  The sample clocks are being configured to frequency %d kHz...\n\r", XFrequency);
+	for (XFreqIndex = 0;
+	     XFreqIndex < (int)(sizeof(ClockingLmx) / sizeof(ClockingLmx[0]));
+	     XFreqIndex++) {
+		if (ClockingLmx[XFreqIndex].XFrequency == XAdcFrequency) {
+			adc_freq_index = XFreqIndex;
+		}
+		if (ClockingLmx[XFreqIndex].XFrequency == XDacFrequency) {
+			dac_freq_index = XFreqIndex;
 		}
 	}
+	if ((adc_freq_index < 0) || (dac_freq_index < 0)) {
+		xil_printf("  ERROR: unsupported LMX frequency (ADC=%d kHz, DAC=%d kHz).\n\r",
+			   XAdcFrequency, XDacFrequency);
+		return XST_FAILURE;
+	}
+	xil_printf("  ADC sample clocks: %d kHz (LMX RF1/RF2)\n\r", XAdcFrequency);
+	xil_printf("  DAC sample clocks: %d kHz (LMX RF3)\n\r", XDacFrequency);
 
 	Config_iic = XIicPs_LookupConfig(XIicBus);
 	if (NULL == Config_iic) {
-		return;
+		return XST_FAILURE;
 	}
 
 	Status = XIicPs_CfgInitialize(&Iic, Config_iic, Config_iic->BaseAddress);
 	if (Status != XST_SUCCESS) {
-		return;
+		return XST_FAILURE;
 	}
 
 	Status = XIicPs_SetSClk(&Iic, ClkRate);
 	if (Status != XST_SUCCESS) {
-		return;
+		return XST_FAILURE;
 	}
 
 	/*
 	 * 0x02-enable Super clock module 0x20- analog I2C power module slaves
 	 */
 	tx_array[0] = 0x20;
-	XIicPs_MasterSendPolled(&Iic, tx_array, 0x01, 0x74);
+	Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x01, 0x74);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
 	while (XIicPs_BusIsBusy(&Iic))
 		;
 
@@ -749,7 +764,7 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	 */
 	Status = XIicPs_MasterRecvPolled(&Iic, rx_array, 1, 0x74);
 	if (Status != XST_SUCCESS) {
-		return;
+		return XST_FAILURE;
 	}
 
 	/*
@@ -763,7 +778,10 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	 */
 	tx_array[0] = 0xF0;
 	tx_array[1] = 0x02;
-	XIicPs_MasterSendPolled(&Iic, tx_array, 0x02, 0x2F);
+	Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x02, 0x2F);
+	if (Status != XST_SUCCESS) {
+		return XST_FAILURE;
+	}
 	while (XIicPs_BusIsBusy(&Iic))
 		;
 
@@ -773,7 +791,7 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	Status = XIicPs_MasterRecvPolled(&Iic, rx_array,
 			2, 0x2F);
 	if (Status != XST_SUCCESS) {
-		return;
+		return XST_FAILURE;
 	}
 
 	/*
@@ -800,9 +818,9 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	sleep(2);
 	for (Index = 0; Index < LMX2594_A_count; Index++) {
 		tx_array[0] = 0x08;
-		tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index]) & (0xFF);
-		tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index] >> 8) & (0xFF);
-		tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index] >> 16) & (0xFF);
+		tx_array[3] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index]) & (0xFF);
+		tx_array[2] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index] >> 8) & (0xFF);
+		tx_array[1] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index] >> 16) & (0xFF);
 		Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 		while (XIicPs_BusIsBusy(&Iic))
 			;
@@ -810,9 +828,9 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	}
 
 	tx_array[0] = 0x08;
-	tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[112]) & (0xFF);
-	tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 8) & (0xFF);
-	tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 16) & (0xFF);
+	tx_array[3] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112]) & (0xFF);
+	tx_array[2] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112] >> 8) & (0xFF);
+	tx_array[1] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112] >> 16) & (0xFF);
 	Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 	while (XIicPs_BusIsBusy(&Iic))
 		;
@@ -835,9 +853,9 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	sleep(2);
 	for (Index = 0; Index < LMX2594_A_count; Index++) {
 		tx_array[0] = 0x04;
-		tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index]) & (0xFF);
-		tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index] >> 8) & (0xFF);
-		tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index] >> 16) & (0xFF);
+		tx_array[3] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index]) & (0xFF);
+		tx_array[2] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index] >> 8) & (0xFF);
+		tx_array[1] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[Index] >> 16) & (0xFF);
 		Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 		while (XIicPs_BusIsBusy(&Iic))
 			;
@@ -845,9 +863,9 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	}
 
 	tx_array[0]=0x04;
-	tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[112]) & (0xFF);
-	tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 8) & (0xFF);
-	tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 16) & (0xFF);
+	tx_array[3] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112]) & (0xFF);
+	tx_array[2] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112] >> 8) & (0xFF);
+	tx_array[1] = (u8) (ClockingLmx[adc_freq_index].LMX2594_A[112] >> 16) & (0xFF);
 	Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 	while (XIicPs_BusIsBusy(&Iic))
 		;
@@ -870,9 +888,9 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 
 	for (Index = 0; Index < LMX2594_A_count; Index++) {
 		tx_array[0] = 0x01;
-		tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index]) & (0xFF);
-		tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index]>> 8) & (0xFF);
-		tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[Index]>> 16) & (0xFF);
+		tx_array[3] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[Index]) & (0xFF);
+		tx_array[2] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[Index]>> 8) & (0xFF);
+		tx_array[1] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[Index]>> 16) & (0xFF);
 		Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 		while (XIicPs_BusIsBusy(&Iic))
 			;
@@ -880,12 +898,13 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 	}
 
 	tx_array[0] = 0x01;
-	tx_array[3] = (u8) (ClockingLmx[freq_index].LMX2594_A[112]) & (0xFF);
-	tx_array[2] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 8) & (0xFF);
-	tx_array[1] = (u8) (ClockingLmx[freq_index].LMX2594_A[112] >> 16) & (0xFF);
+	tx_array[3] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[112]) & (0xFF);
+	tx_array[2] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[112] >> 8) & (0xFF);
+	tx_array[1] = (u8) (ClockingLmx[dac_freq_index].LMX2594_A[112] >> 16) & (0xFF);
 	Status = XIicPs_MasterSendPolled(&Iic, tx_array, 0x04, 0x2F);
 	while (XIicPs_BusIsBusy(&Iic))
 		;
+	return XST_SUCCESS;
 
 #else
 	int XIicDevFile;
@@ -896,10 +915,17 @@ void LMX2594ClockConfig(int XIicBus, int XFrequency)
 
 	if (ioctl(XIicDevFile, I2C_SLAVE_FORCE, 0x2f) < 0) {
 		printf("Error: Could not set address \n");
-		return ;
+		return -1;
 	}
 
-	Lmx2594UpdateFreq(XIicDevFile, XFrequency);
+	if (XAdcFrequency != XDacFrequency) {
+		printf("Separate ADC/DAC LMX frequencies are only supported in bare-metal mode.\n");
+		close(XIicDevFile);
+		return -1;
+	}
+	Lmx2594UpdateFreq(XIicDevFile, XAdcFrequency);
+	close(XIicDevFile);
+	return 0;
 #endif
 }
 #endif /* #ifdef XPS_BOARD_ZCU111*/

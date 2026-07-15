@@ -30,7 +30,7 @@
 #define XPS_BOARD_ZCU111
 //#ifdef XPS_BOARD_ZCU111
 
-void LMX2594ClockConfig(int XIicBus, int XFrequency);
+int LMX2594ClockConfig(int XIicBus, int XAdcFrequency, int XDacFrequency);
 void LMK04208ClockConfig(int XIicBus, unsigned int LMK04208_CKin[1][26]);
 
 //#endif /* XPS_BOARD_ZCU111 */

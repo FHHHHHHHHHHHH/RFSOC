@@ -1,0 +1,25 @@
+Overall result: PASS
+ADC output sample rate: 368.640000 MSPS
+FFT bin width: 22.500 kHz
+AXIS valid beats: ADC10 IQ=8192/8192, ADC12 R2R=8192/8192
+
+ADC10 IQ (Tile 1 / software block 0 / GUI ADC10):
+  Expected complex frequency: -10.000000 MHz
+  Measured complex frequency: -9.990000 MHz
+  Frequency error: 10.000 kHz
+  Main peak: -34.22 dBFS
+  I/Q DC: 0.155, 0.474 LSB
+  I/Q RMS: 512.701, 512.828 LSB
+  Complex RMS: 725.158 LSB
+  Q/I amplitude ratio: 0.999922
+  I/Q amplitude imbalance: -0.0007 dB
+  Q relative to I phase: -89.9987 deg
+  Quadrature phase error: 0.0013 deg
+  Image peak: -122.07 dBFS
+  Image rejection: 87.85 dB
+
+ADC12 R2R (Tile 1 / software block 1 / GUI ADC12):
+  DC: -3.564 LSB
+  RMS: 21.040 LSB
+  Strongest non-DC peak: 180.472500 MHz
+  Strongest non-DC peak level: -71.28 dBFS

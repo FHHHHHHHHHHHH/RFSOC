@@ -74,3 +74,8 @@ desktop.ini
 *.ila
 *.csv
 
+# Local reference documents and generated analysis images
+deco/
+util/output_waveforms/
+ws/*/tempdsa/
+*.err

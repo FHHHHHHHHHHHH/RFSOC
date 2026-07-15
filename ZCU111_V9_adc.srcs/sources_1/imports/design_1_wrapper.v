@@ -1,7 +1,7 @@
 //Copyright 1986-2020 Xilinx, Inc. All Rights Reserved.
 //--------------------------------------------------------------------------------
 //Tool Version: Vivado v.2020.2 (win64) Build 3064766 Wed Nov 18 09:12:45 MST 2020
-//Date        : Mon Jun 29 12:45:04 2026
+//Date        : Tue Jul 14 22:12:23 2026
 //Host        : LAPTOP-VL0GMO35 running 64-bit major release  (build 9200)
 //Command     : generate_target design_1_wrapper.bd
 //Design      : design_1_wrapper
@@ -12,28 +12,28 @@
 module design_1_wrapper
    (CLK_IN_D_0_clk_n,
     CLK_IN_D_0_clk_p,
-    adc0_clk_0_clk_n,
-    adc0_clk_0_clk_p,
+    adc1_clk_0_clk_n,
+    adc1_clk_0_clk_p,
     dac1_clk_0_clk_n,
     dac1_clk_0_clk_p,
-    vin0_01_0_v_n,
-    vin0_01_0_v_p,
-    vin0_23_0_v_n,
-    vin0_23_0_v_p,
+    vin1_01_0_v_n,
+    vin1_01_0_v_p,
+    vin1_23_0_v_n,
+    vin1_23_0_v_p,
     vout10_0_v_n,
     vout10_0_v_p,
     vout11_0_v_n,
     vout11_0_v_p);
   input CLK_IN_D_0_clk_n;
   input CLK_IN_D_0_clk_p;
-  input adc0_clk_0_clk_n;
-  input adc0_clk_0_clk_p;
+  input adc1_clk_0_clk_n;
+  input adc1_clk_0_clk_p;
   input dac1_clk_0_clk_n;
   input dac1_clk_0_clk_p;
-  input vin0_01_0_v_n;
-  input vin0_01_0_v_p;
-  input vin0_23_0_v_n;
-  input vin0_23_0_v_p;
+  input vin1_01_0_v_n;
+  input vin1_01_0_v_p;
+  input vin1_23_0_v_n;
+  input vin1_23_0_v_p;
   output vout10_0_v_n;
   output vout10_0_v_p;
   output vout11_0_v_n;
@@ -41,14 +41,14 @@ module design_1_wrapper
 
   wire CLK_IN_D_0_clk_n;
   wire CLK_IN_D_0_clk_p;
-  wire adc0_clk_0_clk_n;
-  wire adc0_clk_0_clk_p;
+  wire adc1_clk_0_clk_n;
+  wire adc1_clk_0_clk_p;
   wire dac1_clk_0_clk_n;
   wire dac1_clk_0_clk_p;
-  wire vin0_01_0_v_n;
-  wire vin0_01_0_v_p;
-  wire vin0_23_0_v_n;
-  wire vin0_23_0_v_p;
+  wire vin1_01_0_v_n;
+  wire vin1_01_0_v_p;
+  wire vin1_23_0_v_n;
+  wire vin1_23_0_v_p;
   wire vout10_0_v_n;
   wire vout10_0_v_p;
   wire vout11_0_v_n;
@@ -57,14 +57,14 @@ module design_1_wrapper
   design_1 design_1_i
        (.CLK_IN_D_0_clk_n(CLK_IN_D_0_clk_n),
         .CLK_IN_D_0_clk_p(CLK_IN_D_0_clk_p),
-        .adc0_clk_0_clk_n(adc0_clk_0_clk_n),
-        .adc0_clk_0_clk_p(adc0_clk_0_clk_p),
+        .adc1_clk_0_clk_n(adc1_clk_0_clk_n),
+        .adc1_clk_0_clk_p(adc1_clk_0_clk_p),
         .dac1_clk_0_clk_n(dac1_clk_0_clk_n),
         .dac1_clk_0_clk_p(dac1_clk_0_clk_p),
-        .vin0_01_0_v_n(vin0_01_0_v_n),
-        .vin0_01_0_v_p(vin0_01_0_v_p),
-        .vin0_23_0_v_n(vin0_23_0_v_n),
-        .vin0_23_0_v_p(vin0_23_0_v_p),
+        .vin1_01_0_v_n(vin1_01_0_v_n),
+        .vin1_01_0_v_p(vin1_01_0_v_p),
+        .vin1_23_0_v_n(vin1_23_0_v_n),
+        .vin1_23_0_v_p(vin1_23_0_v_p),
         .vout10_0_v_n(vout10_0_v_n),
         .vout10_0_v_p(vout10_0_v_p),
         .vout11_0_v_n(vout11_0_v_n),

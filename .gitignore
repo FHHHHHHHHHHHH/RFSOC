@@ -1,0 +1,62 @@
+# Vivado generated directories
+.Xil/
+*/.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+xsim.dir/
+
+# Vivado/Vitis logs, journals, reports and databases
+*.jou
+*.log
+*.str
+*.tmp
+*.backup.*
+*.pb
+*.wdb
+*.wcfg
+*.vcd
+*.saif
+*.rpt
+*.rpx
+*.dcp
+webtalk*
+vivado_pid*.str
+
+# Generated programming and software outputs
+*.bit
+*.bin
+*.ltx
+*.elf
+*.o
+*.obj
+*.d
+*.a
+*.so
+*.map
+*.dep
+
+# Keep the V10 hardware handoff
+*.xsa
+!sw/design_1_wrapper.xsa
+
+# Local Vitis/generated build workspaces
+sw/ws/
+sw/build/
+sw/compile_check/
+sw/codex_build/
+sw/hardware/
+
+# IDE, OS and local helper directories
+.vscode/
+.idea/
+.agents/
+-p/
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+desktop.ini

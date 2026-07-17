@@ -22,6 +22,7 @@
                               MAX_PAYLOAD_BYTES + CRC_BYTES)
 #define MAX_RX_WORDS         (MAX_PAYLOAD_BYTES + 1U)
 #define COMMAND_BUFFER_BYTES 2304U
+#define RX_PACKETS_PER_POLL  8U
 
 static XLlFifo FifoInstance;
 static XRFdc RFdcInstance;
@@ -29,6 +30,13 @@ static u32 TxFrameWords[MAX_FRAME_WORDS];
 static u32 RxFrameWords[MAX_RX_WORDS];
 static char CommandBuffer[COMMAND_BUFFER_BYTES];
 static unsigned int CommandLength;
+static u8 LoopPayload[MAX_PAYLOAD_BYTES];
+static u16 LoopPayloadLength;
+static u32 LoopFramesQueued;
+static u32 LoopRxOk;
+static u32 LoopRxCrcFail;
+static u32 LoopRxErrors;
+static int LoopEnabled;
 
 static double CurrentDacMHz = DEFAULT_DAC_MHZ;
 static double CurrentAdcMHz = DEFAULT_ADC_MHZ;
@@ -331,7 +339,7 @@ static int StartRfDataConverter(void)
     return XST_SUCCESS;
 }
 
-static int SendPayload(const u8 *payload, u16 payloadLength)
+static int QueuePayload(const u8 *payload, u16 payloadLength, int verbose)
 {
     u16 crc = 0xFFFFU;
     unsigned int index = 0U;
@@ -363,17 +371,43 @@ static int SendPayload(const u8 *payload, u16 payloadLength)
     TxFrameWords[index++] = crc & 0xFFU;
     frameWords = index;
 
-    if (XLlFifo_TxVacancy(&FifoInstance) < frameWords) {
-        xil_printf("[ERR] TX FIFO has %u words free; frame needs %u\r\n",
-                   XLlFifo_TxVacancy(&FifoInstance), frameWords);
+    if (XLlFifo_TxVacancy(&FifoInstance) < frameWords + 1U) {
+        if (verbose) {
+            xil_printf("[ERR] TX FIFO has %u words free; frame needs %u\r\n",
+                       XLlFifo_TxVacancy(&FifoInstance), frameWords + 1U);
+        }
         return XST_DEVICE_BUSY;
     }
 
     XLlFifo_Write(&FifoInstance, TxFrameWords, frameWords * sizeof(u32));
     XLlFifo_TxSetLen(&FifoInstance, frameWords * sizeof(u32));
-    xil_printf("[TX] payload=%u bytes frame=%u symbols CRC=0x%04x\r\n",
-               payloadLength, frameWords * 8U, crc);
+    if (verbose) {
+        xil_printf("[TX] payload=%u bytes frame=%u symbols CRC=0x%04x\r\n",
+                   payloadLength, frameWords * 8U, crc);
+    }
     return XST_SUCCESS;
+}
+
+static int SendPayload(const u8 *payload, u16 payloadLength)
+{
+    return QueuePayload(payload, payloadLength, 1);
+}
+
+static void ServiceLoopTransmission(void)
+{
+    int status;
+
+    if (!LoopEnabled)
+        return;
+
+    status = QueuePayload(LoopPayload, LoopPayloadLength, 0);
+    if (status == XST_SUCCESS) {
+        ++LoopFramesQueued;
+    } else if (status != XST_DEVICE_BUSY) {
+        LoopEnabled = 0;
+        xil_printf("\r\n[LOOP ERR] continuous transmission stopped: status=%d\r\n> ",
+                   status);
+    }
 }
 
 static void PollReceiveFifo(void)
@@ -383,16 +417,21 @@ static void PollReceiveFifo(void)
     u32 status;
     u32 payloadLength;
     u32 index;
+    u32 packetsProcessed = 0U;
 
     if (XLlFifo_IsRxDone(&FifoInstance) == 0)
         return;
 
-    while (XLlFifo_RxOccupancy(&FifoInstance) != 0U) {
+    while (XLlFifo_RxOccupancy(&FifoInstance) != 0U &&
+           packetsProcessed < RX_PACKETS_PER_POLL) {
+        ++packetsProcessed;
         packetBytes = XLlFifo_RxGetLen(&FifoInstance);
         packetWords = (packetBytes + sizeof(u32) - 1U) / sizeof(u32);
         if (packetWords > MAX_RX_WORDS) {
             u32 discard;
-            xil_printf("\r\n[RX ERR] oversized FIFO packet: %u bytes\r\n", packetBytes);
+            ++LoopRxErrors;
+            if (!LoopEnabled)
+                xil_printf("\r\n[RX ERR] oversized FIFO packet: %u bytes\r\n", packetBytes);
             while (packetBytes != 0U) {
                 XLlFifo_Read(&FifoInstance, &discard, sizeof(discard));
                 packetBytes = (packetBytes > sizeof(discard))
@@ -403,19 +442,31 @@ static void PollReceiveFifo(void)
 
         XLlFifo_Read(&FifoInstance, RxFrameWords, packetBytes);
         if (packetWords == 0U || ((RxFrameWords[0] >> 24) & 0xFFU) != 0xD5U) {
-            xil_printf("\r\n[RX ERR] invalid receiver packet\r\n");
+            ++LoopRxErrors;
+            if (!LoopEnabled)
+                xil_printf("\r\n[RX ERR] invalid receiver packet\r\n");
             continue;
         }
 
         status = (RxFrameWords[0] >> 16) & 0xFFU;
         payloadLength = RxFrameWords[0] & 0xFFFFU;
         if (status == 0U) {
-            xil_printf("\r\n[RX CRC FAIL] decoded_length=%u\r\n", payloadLength);
+            ++LoopRxCrcFail;
+            if (!LoopEnabled)
+                xil_printf("\r\n[RX CRC FAIL] decoded_length=%u\r\n", payloadLength);
             continue;
         }
         if (payloadLength + 1U > packetWords) {
-            xil_printf("\r\n[RX ERR] truncated packet: length=%u words=%u\r\n",
-                       payloadLength, packetWords);
+            ++LoopRxErrors;
+            if (!LoopEnabled) {
+                xil_printf("\r\n[RX ERR] truncated packet: length=%u words=%u\r\n",
+                           payloadLength, packetWords);
+            }
+            continue;
+        }
+
+        if (LoopEnabled) {
+            ++LoopRxOk;
             continue;
         }
 
@@ -430,13 +481,16 @@ static void PollReceiveFifo(void)
         xil_printf("\r\n> ");
     }
 
-    XLlFifo_IntClear(&FifoInstance, XLLF_INT_RC_MASK);
+    if (XLlFifo_RxOccupancy(&FifoInstance) == 0U)
+        XLlFifo_IntClear(&FifoInstance, XLLF_INT_RC_MASK);
 }
 
 static void PrintHelp(void)
 {
     xil_printf("\r\nCommands:\r\n");
     xil_printf("  SEND <text>       transmit ASCII text with framing and CRC\r\n");
+    xil_printf("  LOOP <text>       continuously transmit framed ASCII text\r\n");
+    xil_printf("  STOP              stop continuous transmission\r\n");
     xil_printf("  TRAS <bits>       transmit binary bytes, MSB first\r\n");
     xil_printf("  DACF <MHz>        set both DAC NCOs\r\n");
     xil_printf("  ADCF <MHz>        set both ADC NCOs\r\n");
@@ -475,6 +529,32 @@ static void ProcessCommand(char *line)
                        MAX_PAYLOAD_BYTES);
         else
             SendPayload((const u8 *)argument, (u16)length);
+    } else if (strcmp(command, "LOOP") == 0) {
+        size_t length = strlen(argument);
+        if (length == 0U || length > MAX_PAYLOAD_BYTES) {
+            xil_printf("\r\n[ERR] LOOP length must be 1..%u bytes\r\n",
+                       MAX_PAYLOAD_BYTES);
+        } else {
+            memcpy(LoopPayload, argument, length);
+            LoopPayloadLength = (u16)length;
+            LoopFramesQueued = 0U;
+            LoopRxOk = 0U;
+            LoopRxCrcFail = 0U;
+            LoopRxErrors = 0U;
+            LoopEnabled = 1;
+            xil_printf("\r\n[OK] continuous TX started: payload=%u bytes; use STOP to end\r\n",
+                       LoopPayloadLength);
+        }
+    } else if (strcmp(command, "STOP") == 0) {
+        if (LoopEnabled) {
+            LoopEnabled = 0;
+            xil_printf("\r\n[OK] continuous TX stopped: queued=%u rx_ok=%u "
+                       "crc_fail=%u rx_err=%u\r\n",
+                       LoopFramesQueued, LoopRxOk, LoopRxCrcFail,
+                       LoopRxErrors);
+        } else {
+            xil_printf("\r\n[OK] continuous TX is not active\r\n");
+        }
     } else if (strcmp(command, "TRAS") == 0) {
         static u8 binaryPayload[MAX_PAYLOAD_BYTES];
         size_t bitLength = strlen(argument);
@@ -526,6 +606,11 @@ static void ProcessCommand(char *line)
         PrintMixer(XRFDC_ADC_TILE, ADC_TILE_ID, BLOCK_1);
     } else if (strcmp(command, "STAT") == 0) {
         PrintStatus();
+        xil_printf("[LOOP] enabled=%u payload=%u queued=%u rx_ok=%u "
+                   "crc_fail=%u rx_err=%u\r\n",
+                   (unsigned int)LoopEnabled, LoopPayloadLength,
+                   LoopFramesQueued, LoopRxOk, LoopRxCrcFail,
+                   LoopRxErrors);
     } else if (strcmp(command, "HELP") == 0 || command[0] == '\0') {
         PrintHelp();
     } else {
@@ -615,6 +700,7 @@ int main(void)
     while (1) {
         PollConsole();
         PollReceiveFifo();
+        ServiceLoopTransmission();
     }
 
     cleanup_platform();

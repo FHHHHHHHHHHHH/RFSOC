@@ -73,6 +73,8 @@ Functional simulation uses an ideal DAC/NCO/cable/ADC model and decodes
 
 ```text
 SEND Hello RFSoC
+LOOP RFSOC
+STOP
 TRAS 01010101
 DACF 2400
 ADCF 2390
@@ -123,6 +125,9 @@ scripts/create_v10_vitis_workspace.tcl
 - Board validation: PASS. RFDC Tile1 startup, UART commands, AXI FIFO TX/RX,
   `SEND Hello RFSoC`, `TRAS 01010101` and DAC10-to-ADC10 DBPSK demodulation
   were confirmed on hardware.
+- `LOOP <text>` and `STOP` continuous framed-transmission commands were added
+  after the board validation above and pass AArch64 compile/link verification;
+  their final continuous-mode counters still require board confirmation.
 
 To rebuild the complete hardware:
 

@@ -44,6 +44,7 @@ vivado_pid*.str
 !sw/design_1_wrapper.xsa
 
 # Local Vitis/generated build workspaces
+tmp/
 sw/ws/
 sw/build/
 sw/compile_check/

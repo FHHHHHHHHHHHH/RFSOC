@@ -42,6 +42,7 @@ vivado_pid*.str
 # Keep the V10 hardware handoff
 *.xsa
 !sw/design_1_wrapper.xsa
+!V11_LFM_RANGE/sw/design_1_wrapper.xsa
 
 # Local Vitis/generated build workspaces
 sw/ws/

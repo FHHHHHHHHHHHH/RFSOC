@@ -53,11 +53,278 @@
 3. 多个独立 lane 数组增加了端口和读取组合逻辑；
 4. `score_mem` 保存所有 lag 分数，但最终只需要最大峰及左右邻点，存储需求大于算法实际需求。
 
-### 2.3 处理方法
+### 2.3 修改前后的 BRAM RTL 对比
+
+> 说明：优化前的 RTL 文件没有保存在当前 Git 历史中。下面标为“修改前”的
+> 代码是根据当时的数组组织、综合日志和修改记录还原的等价结构，用于说明
+> Vivado 为什么不能推断 BRAM，并非声称与已丢失的旧文件逐字相同。“修改后”
+> 代码则对应当前 `rtl/lfm_radar_core.v` 的实际实现。
+
+#### 2.3.1 修改前：四 lane I/Q 被拆成多个窄数组
+
+优化前的等价组织方式如下：
+
+```verilog
+// 修改前等价示意：每个 lane、每个 I/Q 分量使用独立数组。
+reg signed [15:0] reference_i0_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_i1_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_i2_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_i3_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_q0_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_q1_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_q2_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] reference_q3_mem [0:CAPTURE_BEATS-1];
+
+reg signed [15:0] echo_i0_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_i1_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_i2_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_i3_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_q0_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_q1_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_q2_mem [0:CAPTURE_BEATS-1];
+reg signed [15:0] echo_q3_mem [0:CAPTURE_BEATS-1];
+```
+
+这种组织在逻辑功能上没有错误，但会产生 16 个独立存储对象。相关器每次读取
+一个复数样点时，既要根据样点地址选择数组深度，又要根据 `sample_index[1:0]`
+选择 lane。若再使用异步读取，综合器需要在这些数组后面构造大量 MUX。
+
+修改后按照 RFDC 接口的天然 128 bit beat 进行打包：
+
+```verilog
+// 修改后实际代码：一个 BRAM word 保存四个复数样点。
+(* ram_style = "block" *) reg [127:0]
+    reference_mem [0:CAPTURE_BEATS-1];
+(* ram_style = "block" *) reg [127:0]
+    echo_mem [0:CAPTURE_BEATS-1];
+
+// 写入布局：{Q3,Q2,Q1,Q0,I3,I2,I1,I0}
+reference_mem[capture_beat_index] <= {
+    ref_q_axis_tdata, ref_i_axis_tdata
+};
+echo_mem[capture_beat_index] <= {
+    echo_q_axis_tdata, echo_i_axis_tdata
+};
+```
+
+对比结果：
+
+| 项目 | 修改前 | 修改后 |
+|---|---|---|
+| 存储对象 | 16 个 2048x16 数组 | 2 个 2048x128 数组 |
+| 与 RFDC beat 的关系 | 一个 beat 被拆成 16 次字段写入 | 一个 beat 对应一次宽字写入 |
+| lane 选择位置 | 分散在多个数组/函数中 | BRAM 输出后统一选择 |
+| BRAM 模板匹配 | 困难 | 匹配同步宽 SDP RAM |
+
+#### 2.3.2 修改前：通过函数进行异步数组读取
+
+原始问题的核心不是“使用了函数”，而是函数内部直接用可变地址读取数组；函数
+结果又被组合乘法器立即消费。等价结构如下：
+
+```verilog
+// 修改前等价示意：数组读取没有寄存器边界，是异步读语义。
+function signed [15:0] read_reference_i;
+    input [15:0] sample;
+    reg [15:0] beat;
+    begin
+        beat = sample >> 2;
+        case (sample[1:0])
+            2'd0: read_reference_i = reference_i0_mem[beat];
+            2'd1: read_reference_i = reference_i1_mem[beat];
+            2'd2: read_reference_i = reference_i2_mem[beat];
+            default: read_reference_i = reference_i3_mem[beat];
+        endcase
+    end
+endfunction
+
+wire signed [15:0] corr_ref_i = read_reference_i(sample_index);
+wire signed [15:0] corr_echo_i =
+    read_echo_i(sample_index + lag_index);
+```
+
+从 RTL 语义看，只要 `sample_index` 或 `lag_index` 变化，`corr_ref_i` 和
+`corr_echo_i` 必须在同一时钟周期内组合变化。物理 BRAM 无法提供这种异步读口，
+所以即使添加：
+
+```verilog
+(* ram_style = "block" *)
+```
+
+Vivado 也不能违背 RTL 语义强行使用同步 BRAM，只能把数据拆成寄存器/LUT RAM，
+再用地址译码和 MUX 实现异步读取。
+
+修改后把“存储读取”和“lane 选择”分成两个明确步骤：
+
+```verilog
+// 修改后实际代码：BRAM 同步读，输出先进入寄存器。
+always @(posedge clk) begin
+    reference_read_data <= reference_mem[reference_read_address];
+    echo_read_data      <= echo_mem[echo_read_address];
+end
+
+// 下一阶段只在已经注册的 128 bit BRAM 输出中选择 lane。
+wire signed [15:0] corr_ref_i =
+    select_lane(reference_read_data[63:0], ref_lane_index);
+wire signed [15:0] corr_ref_q =
+    select_lane(reference_read_data[127:64], ref_lane_index);
+wire signed [15:0] corr_echo_i =
+    select_lane(echo_read_data[63:0], echo_lane_index);
+wire signed [15:0] corr_echo_q =
+    select_lane(echo_read_data[127:64], echo_lane_index);
+```
+
+地址和 lane 号的关系为：
+
+```verilog
+wire [15:0] echo_sample_address = sample_index + lag_index;
+wire [15:0] reference_read_address = sample_index >> 2;
+wire [15:0] echo_read_address = echo_sample_address >> 2;
+
+// READ 状态保存 lane，使其与下一拍 BRAM 输出对齐。
+ref_lane_index  <= sample_index[1:0];
+echo_lane_index <= echo_sample_address[1:0];
+```
+
+这里的关键不是简单“多加一个寄存器”，而是把 RTL 的存储语义从异步读改成了
+物理 BRAM 支持的同步读，并显式处理了一个时钟的读延迟。
+
+#### 2.3.3 修改前：RAM 写入与异步复位控制混在同一过程
+
+另一种破坏 RAM 推断的典型结构是把数组写入放进包含异步复位的主控制过程：
+
+```verilog
+// 修改前等价示意。
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        capture_beat_index <= 0;
+        // 某些版本还可能试图复位数组或其输出。
+    end else begin
+        if (capture_active && adc_valid) begin
+            reference_i0_mem[capture_beat_index] <= ref_i_axis_tdata[15:0];
+            reference_i1_mem[capture_beat_index] <= ref_i_axis_tdata[31:16];
+            // 其余 reference/echo I/Q lane 写入……
+        end
+
+        // 同一个过程还负责状态机、累加器和峰值寄存器。
+        if (score > max_score)
+            max_score <= score;
+    end
+end
+```
+
+BRAM 内容本身没有异步清零端口。当 RAM 写行为和异步复位控制混合，尤其是数组
+或读数据也出现在复位分支时，综合器很难把 always 块识别为标准 RAM 模板。
+
+修改后把存储器过程和控制过程完全分开：
+
+```verilog
+// 修改后实际结构：无复位 RAM 过程。
+always @(posedge clk) begin
+    if (capture_write_enable) begin
+        reference_mem[capture_beat_index] <= {
+            ref_q_axis_tdata, ref_i_axis_tdata
+        };
+        echo_mem[capture_beat_index] <= {
+            echo_q_axis_tdata, echo_i_axis_tdata
+        };
+    end
+
+    reference_read_data <= reference_mem[reference_read_address];
+    echo_read_data      <= echo_mem[echo_read_address];
+
+    if (background_write_enable)
+        background_mem[lag_index] <= {
+            corr_sum_re_pipe, corr_sum_im_pipe
+        };
+    background_read_data <= background_mem[lag_index];
+end
+
+// 独立控制过程可以继续使用异步复位，但不再写任何 memory。
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        proc_state <= PROC_IDLE;
+        max_score  <= 49'd0;
+        // 只复位控制寄存器和数据通路寄存器。
+    end else begin
+        // FSM、计数器、流水寄存器和 AXI 输出控制。
+    end
+end
+```
+
+RAM 不需要在复位时清零。是否可以读取其中的数据由 `proc_state`、
+`background_valid` 和采集完成条件保证。这种“内容不复位、有效性复位”的方法
+既符合物理 BRAM 能力，也避免生成数十万位复位寄存器。
+
+#### 2.3.4 修改前后：完整 score_mem 与邻点流式跟踪
+
+修改前保存每个 lag 的分数：
+
+```verilog
+// 修改前等价示意。
+reg [48:0] score_mem [0:MAX_LAG-1];
+
+score_mem[lag_index] <= score;
+
+if (score > max_score) begin
+    max_score     <= score;
+    max_lag_index <= lag_index;
+end
+
+// 扫描结束后再读取峰值左右邻点。
+final_left_score  <= score_mem[max_lag_index - 1'b1];
+final_right_score <= score_mem[max_lag_index + 1'b1];
+```
+
+这种方法增加一个 128x49 存储对象，并且峰值确定以后还需要按动态地址重新读取。
+如果 score RAM 同样采用异步读，就会进一步增加寄存器和 MUX。
+
+修改后利用 lag 按顺序扫描的特点，不保存完整数组：
+
+```verilog
+// 修改后实际代码的核心逻辑。
+previous_score <= magnitude_pipe;
+
+if (magnitude_pipe > max_score) begin
+    max_score         <= magnitude_pipe;
+    max_lag_index     <= lag_index;
+    max_left_score    <= (lag_index == 0) ? 49'd0 : previous_score;
+    max_right_score   <= 49'd0;
+    max_waiting_right <= (lag_index != MAX_LAG - 1);
+end else if (max_waiting_right) begin
+    max_right_score   <= magnitude_pipe;
+    max_waiting_right <= 1'b0;
+end
+```
+
+原理是：
+
+1. 扫描到新最大值时，`previous_score` 正好是它的左邻点；
+2. 下一个 lag 到达时，若 `max_waiting_right=1`，当前值就是右邻点；
+3. 任何时刻只需保存最大值及两个邻点，空间复杂度从 `O(MAX_LAG)` 降为 `O(1)`。
+
+#### 2.3.5 BRAM 修改的因果链
+
+```text
+修改前异步数组语义
+  -> 物理 BRAM 无法匹配
+  -> 数组拆成寄存器/LUT
+  -> 动态地址形成大 MUX
+  -> MUX 输出直接进入乘法和峰值链
+  -> 面积、布线和时序同时恶化
+
+修改后同步宽 BRAM语义
+  -> reference/echo/background 推断为 RAMB36E2/RAMB18E2
+  -> BRAM 输出先注册
+  -> lane MUX 只处理一个 128 bit word
+  -> 存储和算术之间形成明确时序边界
+  -> 资源和时序均可控
+```
+
+### 2.4 处理方法
 
 当前 RTL 在 [rtl/lfm_radar_core.v](rtl/lfm_radar_core.v) 中采用以下结构。
 
-#### 2.3.1 将四 lane 打包为宽 BRAM
+#### 2.4.1 将四 lane 打包为宽 BRAM
 
 采集数据按 RFDC 每拍的数据结构保存：
 
@@ -68,7 +335,7 @@
 
 其中 `CAPTURE_BEATS = 8192 / 4 = 2048`。每个 BRAM 逻辑字保存四个 I 样点和四个 Q 样点，避免把同一 ADC beat 拆成多个小数组。
 
-#### 2.3.2 使用独立的无复位同步 RAM 过程
+#### 2.4.2 使用独立的无复位同步 RAM 过程
 
 存储器只在单独的时钟过程内读写，不对 RAM 内容和读端口施加复位：
 
@@ -86,7 +353,7 @@ end
 
 数据有效性由 FSM 管理，而不是依赖 RAM 清零。
 
-#### 2.3.3 背景相关值改为同步 BRAM
+#### 2.4.3 背景相关值改为同步 BRAM
 
 每个 lag 保存 48 bit 实部和 48 bit 虚部：
 
@@ -96,7 +363,7 @@ end
 
 背景校准在 `DIFF` 阶段写入已完成并注册的相关和；正常扫描则同步读取背景并在后续寄存级相减。
 
-#### 2.3.4 删除完整 score_mem
+#### 2.4.4 删除完整 score_mem
 
 峰值搜索只保留：
 
@@ -108,11 +375,11 @@ end
 
 这样仍可在软件端执行三点抛物线插值，但不需要保存全部 128 个 score。
 
-#### 2.3.5 波形 ROM 使用同步 Block ROM
+#### 2.4.5 波形 ROM 使用同步 Block ROM
 
 `lfm_400mhz_4096.mem` 以同步 ROM 方式读取，并提前一拍准备 DAC 输出，保持 AXI 数据序列不重复、不遗漏。
 
-### 2.4 BRAM 优化结果
+### 2.5 BRAM 优化结果
 
 独立 `lfm_radar_core` 综合报告显示：
 
@@ -153,7 +420,276 @@ BRAM输出 -> lane选择 -> 复数乘法 -> 复数累加 -> 背景相减
 - 49 bit 幅度求和和比较；
 - 最大峰、左右邻点等多个寄存器的高扇出 CE。
 
-### 3.2 六级流水处理方法
+### 3.2 修改前后的相关数据通路 RTL 对比
+
+与第 2 章相同，下面“修改前”代码是根据原始组合结构还原的等价示意；
+“修改后”代码对应当前 RTL 的实际寄存器和状态名。
+
+#### 3.2.1 修改前：一个组合 score 跨越全部算术层级
+
+优化前的等价数据通路可以概括为：
+
+```verilog
+// 修改前等价示意：BRAM/数组读取后直接完成全部相关尾部运算。
+wire signed [15:0] ref_i  = read_reference_i(sample_index);
+wire signed [15:0] ref_q  = read_reference_q(sample_index);
+wire signed [15:0] echo_i = read_echo_i(sample_index + lag_index);
+wire signed [15:0] echo_q = read_echo_q(sample_index + lag_index);
+
+wire signed [32:0] product_re = echo_i * ref_i + echo_q * ref_q;
+wire signed [32:0] product_im = echo_q * ref_i - echo_i * ref_q;
+
+wire signed [47:0] accum_next_re = corr_acc_re + product_re;
+wire signed [47:0] accum_next_im = corr_acc_im + product_im;
+
+wire signed [47:0] diff_re = background_valid ?
+    accum_next_re - background_re[lag_index] : accum_next_re;
+wire signed [47:0] diff_im = background_valid ?
+    accum_next_im - background_im[lag_index] : accum_next_im;
+
+wire [48:0] score = abs48(diff_re) + abs48(diff_im);
+
+always @(posedge clk) begin
+    if (last_sample_of_lag && score > max_score) begin
+        max_score     <= score;
+        max_lag_index <= lag_index;
+    end
+end
+```
+
+从 `max_score` 的角度看，上述代码形成两类路径：
+
+```text
+D 路径：memory -> lane MUX -> multiplier -> adder -> accumulator
+      -> background subtract -> abs -> add -> max_score/D
+
+CE 路径：同一条 score 生成链 -> 49 bit comparator
+       -> if 条件/写使能译码 -> max_score/CE
+```
+
+综合器通常把：
+
+```verilog
+if (score > max_score)
+    max_score <= score;
+```
+
+实现为带 CE 的寄存器。也就是说，比较器结果不仅决定数据 MUX，还可能直接成为
+`max_score_reg[*]/CE`，并扇出到 `max_lag_index`、左右邻点和控制标志。即使 D 路径
+勉强满足时序，CE 端仍可能因为深组合逻辑和高扇出而失败。
+
+#### 3.2.2 修改后：READ 隔离同步 BRAM 延迟
+
+```verilog
+if (proc_state == PROC_CORR_READ) begin
+    ref_lane_index  <= sample_index[1:0];
+    echo_lane_index <= echo_sample_address[1:0];
+    proc_state      <= PROC_CORR_MULT;
+end
+```
+
+同时，无复位 RAM 过程执行：
+
+```verilog
+reference_read_data <= reference_mem[reference_read_address];
+echo_read_data      <= echo_mem[echo_read_address];
+```
+
+该阶段解决两个对齐问题：
+
+- BRAM 地址在本拍发出，数据在下一拍进入 `reference_read_data/echo_read_data`；
+- lane 号与发出地址时的 `sample_index/lag_index` 一起保存，避免下一拍计数变化后
+  lane 选择错位。
+
+寄存边界：
+
+```text
+reference_mem/echo_mem -> reference_read_data/echo_read_data
+```
+
+#### 3.2.3 修改后：MULT 只负责乘法并注册四个乘积
+
+```verilog
+wire signed [31:0] mult_ei_ri = corr_echo_i * corr_ref_i;
+wire signed [31:0] mult_eq_rq = corr_echo_q * corr_ref_q;
+wire signed [31:0] mult_eq_ri = corr_echo_q * corr_ref_i;
+wire signed [31:0] mult_ei_rq = corr_echo_i * corr_ref_q;
+
+if (proc_state == PROC_CORR_MULT) begin
+    mult_ei_ri_pipe <= mult_ei_ri;
+    mult_eq_rq_pipe <= mult_eq_rq;
+    mult_eq_ri_pipe <= mult_eq_ri;
+    mult_ei_rq_pipe <= mult_ei_rq;
+    proc_state      <= PROC_CORR_ACCUM;
+end
+```
+
+乘法器输出不会在同一拍继续穿过复数加法、48 bit 累加和峰值比较。寄存边界为：
+
+```text
+BRAM output + lane MUX + DSP multiply -> mult_*_pipe
+```
+
+独立核心综合后的最慢 setup 路径正是这一段：从 `reference_mem` 输出，经 lane
+选择进入 DSP，WNS 仍有 `+1.984 ns`。这也证明流水切分后，最慢路径已经被限制在
+单个局部阶段，而不是继续延伸到 `max_score`。
+
+#### 3.2.4 修改后：ACCUM 只负责复数合成和累加
+
+```verilog
+wire signed [32:0] product_re_pipe =
+    $signed(mult_ei_ri_pipe) + $signed(mult_eq_rq_pipe);
+wire signed [32:0] product_im_pipe =
+    $signed(mult_eq_ri_pipe) - $signed(mult_ei_rq_pipe);
+
+wire signed [47:0] corr_acc_next_re =
+    corr_acc_re + {{15{product_re_pipe[32]}}, product_re_pipe};
+wire signed [47:0] corr_acc_next_im =
+    corr_acc_im + {{15{product_im_pipe[32]}}, product_im_pipe};
+
+if (proc_state == PROC_CORR_ACCUM) begin
+    if (sample_index == CORR_SAMPLES - 1) begin
+        corr_sum_re_pipe <= corr_acc_next_re;
+        corr_sum_im_pipe <= corr_acc_next_im;
+        corr_acc_re      <= 48'sd0;
+        corr_acc_im      <= 48'sd0;
+        sample_index     <= 16'd0;
+        proc_state       <= PROC_CORR_DIFF;
+    end else begin
+        corr_acc_re  <= corr_acc_next_re;
+        corr_acc_im  <= corr_acc_next_im;
+        sample_index <= sample_index + 1'b1;
+        proc_state   <= PROC_CORR_READ;
+    end
+end
+```
+
+最后一个样点的完整相关和必须锁存到 `corr_sum_*_pipe`，不能直接把
+`corr_acc_next_*` 继续送入背景减法。否则最后一次乘积、累加和背景减法仍会处于
+同一个组合周期。
+
+寄存边界：
+
+```text
+mult_*_pipe -> complex add/sub -> 48 bit accumulator -> corr_sum_*_pipe
+```
+
+#### 3.2.5 修改后：DIFF 隔离背景 BRAM 和减法
+
+```verilog
+if (proc_state == PROC_CORR_DIFF) begin
+    corr_diff_re_pipe <= background_valid ?
+        (corr_sum_re_pipe - background_read_re) :
+        corr_sum_re_pipe;
+    corr_diff_im_pipe <= background_valid ?
+        (corr_sum_im_pipe - background_read_im) :
+        corr_sum_im_pipe;
+    proc_state <= PROC_CORR_MAG;
+end
+```
+
+背景校准写入使用同一个已完成的相关和：
+
+```verilog
+wire background_write_enable =
+    (proc_state == PROC_CORR_DIFF) && scan_calibrate;
+
+if (background_write_enable) begin
+    background_mem[lag_index] <= {
+        corr_sum_re_pipe, corr_sum_im_pipe
+    };
+end
+```
+
+正常测量和背景校准都以 `corr_sum_*_pipe` 为唯一输入，避免“校准写入旧累加值”
+或“最后一次乘积尚未加入”的非阻塞赋值时序错误。
+
+寄存边界：
+
+```text
+corr_sum_*_pipe + background_read_data -> subtract -> corr_diff_*_pipe
+```
+
+#### 3.2.6 修改后：MAG 独立完成绝对值和幅度求和
+
+```verilog
+if (proc_state == PROC_CORR_MAG) begin
+    magnitude_pipe <=
+        {1'b0, abs48(corr_diff_re_pipe)} +
+        {1'b0, abs48(corr_diff_im_pipe)};
+    proc_state <= PROC_CORR_UPDATE;
+end
+```
+
+寄存边界：
+
+```text
+corr_diff_*_pipe -> two abs48 -> 49 bit add -> magnitude_pipe
+```
+
+因此绝对值和幅度加法不再与背景减法或峰值比较位于同一拍。
+
+#### 3.2.7 修改后：UPDATE 只比较已注册 magnitude_pipe
+
+```verilog
+if (proc_state == PROC_CORR_UPDATE) begin
+    previous_score <= magnitude_pipe;
+
+    if (magnitude_pipe > max_score) begin
+        max_score         <= magnitude_pipe;
+        max_lag_index     <= lag_index;
+        max_left_score    <= (lag_index == 0) ?
+            49'd0 : previous_score;
+        max_right_score   <= 49'd0;
+        max_waiting_right <= (lag_index != MAX_LAG - 1);
+    end else if (max_waiting_right) begin
+        max_right_score   <= magnitude_pipe;
+        max_waiting_right <= 1'b0;
+    end
+end
+```
+
+修改后的 `max_score` 路径只剩：
+
+```text
+D 路径：magnitude_pipe/Q -> score data MUX -> max_score/D
+CE路径：magnitude_pipe/Q -> 49 bit compare -> local control -> max_score/CE
+```
+
+它不再包含 BRAM、lane MUX、乘法、累加、背景减法或绝对值。报告验证：
+
+- `max_score` D slack：`+4.044 ns`；
+- `max_score` CE slack：`+3.813 ns`；
+- 两条报告路径的起点均为 `magnitude_pipe` 寄存器，而不是 `reference_mem`。
+
+#### 3.2.8 修改前后路径总览
+
+| 路径部分 | 修改前是否与 max_score 同拍 | 修改后所在寄存级 |
+|---|---|---|
+| reference/echo 存储读取 | 是 | READ |
+| lane 选择与四个乘法 | 是 | MULT |
+| 复数合成与48 bit累加 | 是 | ACCUM |
+| 背景读取与复数减法 | 是 | DIFF |
+| 两个48 bit绝对值与求和 | 是 | MAG |
+| 最大值比较和邻点更新 | 是 | UPDATE |
+
+```text
+修改前：
+memory -> mux -> multiply -> accumulate -> subtract -> abs/add -> compare -> CE
+
+修改后：
+memory -> [READ]
+       -> mux/multiply -> [MULT]
+       -> complex accumulate -> [ACCUM]
+       -> background subtract -> [DIFF]
+       -> abs/add -> [MAG]
+       -> compare/update -> [UPDATE]
+```
+
+方括号表示寄存器边界。这样每个时钟周期只承担一类主要算术任务，关键路径长度
+和逻辑扇出均受到限制。
+
+### 3.3 六级流水处理方法
 
 当前实现把相关器拆成六个具有明确寄存器边界的状态。
 
@@ -174,9 +710,9 @@ BRAM -> READ reg -> MULT reg -> ACCUM reg -> DIFF reg -> MAG reg -> UPDATE reg
 
 `max_score` 只由已注册的 `magnitude_pipe` 驱动，不再直接依赖采集 BRAM、乘法器、累加器或背景 BRAM。
 
-### 3.3 六级流水验证结果
+### 3.4 六级流水验证结果
 
-#### 3.3.1 行为仿真
+#### 3.4.1 行为仿真
 
 `sim/tb_lfm_radar_core.sv` 完成以下回归：
 
@@ -187,7 +723,7 @@ BRAM -> READ reg -> MULT reg -> ACCUM reg -> DIFF reg -> MAG reg -> UPDATE reg
 
 RTL 仿真结果为 PASS。
 
-#### 3.3.2 独立相关核时序
+#### 3.4.2 独立相关核时序
 
 在 5.425 ns（约 184.32 MHz）时钟约束下：
 
@@ -200,7 +736,7 @@ RTL 仿真结果为 PASS。
 
 独立综合的 -0.070 ns hold 是未布局网表的估算结果，不应作为最终 sign-off。
 
-#### 3.3.3 完整工程实现时序
+#### 3.4.3 完整工程实现时序
 
 完整 routed timing summary 显示：
 
@@ -213,7 +749,7 @@ RTL 仿真结果为 PASS。
 
 报告位置：`V11_LFM_RANGE.runs/impl_1/design_1_wrapper_timing_summary_routed.rpt`。
 
-#### 3.3.4 同轴线硬件验证
+#### 3.4.4 同轴线硬件验证
 
 参考线固定为 0.3 m，改变测量线长度后获得：
 

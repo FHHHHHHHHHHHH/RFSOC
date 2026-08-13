@@ -25,7 +25,13 @@ V11 是在已验证的 V10 RFDC、时钟和 PS 控制基础上建立的独立短
 | 距离采样间隔 | 约 203.31 mm |
 | 串口默认输出速率 | 每 9 个结果输出 1 次 |
 
-相关处理当前采用单标量复相关引擎。一次 128-lag 搜索约需 5.6 ms，因此有效内部测距更新率约 178 Hz；串口默认降采样后约 20 Hz，与运动单目标显示需求匹配。三点抛物线插值可以改善峰值位置读数，但不能突破 400 MHz 带宽决定的双目标分辨能力。
+相关处理当前采用 BRAM 存储和 `READ/MULT/ACCUM/DIFF/MAG/UPDATE`
+六级寄存化单标量复相关引擎。由于当前由 FSM 串行推进，每个相关样点的
+`READ/MULT/ACCUM` 共占 3 拍；一次 128-lag 搜索连同采集约需 16.8 ms，
+有效内部测距更新率约 59 Hz。六级结构解决了 BRAM 推断以及
+`reference_mem` 到 `max_score` 时钟使能端的时序问题，但它还不是真正
+启动间隔为 1 的重叠流水。三点抛物线插值可以改善单目标峰值位置读数，
+但不能突破 400 MHz 带宽决定的约 0.375 m 双目标分辨能力。
 
 ## 信号链
 
@@ -167,7 +173,21 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -File V11_LFM_RANGE/scripts/compile_check_sw.ps1
 ```
 
-当前机器的 BD 生成和 RTL 仿真均已通过；A53 软件也已用 `-Wall -Wextra -Werror` 编译通过。本机当前没有 `xczu28dr` 的 Vivado Synthesis 许可证，因此未在本次会话中生成 bitstream/XSA。取得许可证后运行 `build_v11_hardware.tcl` 即可继续。
+当前验证状态：
+
+- BD 校验和 target generation 已通过；
+- RTL 仿真通过，完成背景校准并正确检测 lag-7 目标；
+- A53 软件通过 `-Wall -Wextra -Werror` 编译检查；
+- 独立相关核成功推断 16.5 个 Block RAM Tile 和 4 个 DSP48E2；
+- 独立核 setup WNS 为 `+1.984 ns`；
+- `max_score` D/CE slack 分别为 `+4.044 ns` 和 `+3.813 ns`；
+- 完整 routed design 的 setup WNS 为 `+0.828 ns`，hold WHS 为 `+0.010 ns`；
+- bitstream/XSA 已生成，仓库包含 `sw/design_1_wrapper.xsa`；
+- 同轴线实测中，0.3 m 参考线配合 1.0/2.0/2.3/3.0 m 测量线时，
+  lag 分别约为 2/6/7/9，距离变化与约 0.70 的线缆速度因子吻合。
+
+BRAM、六级流水、吞吐复算和后续优化路线见
+[LFM_BRAM_PIPELINE_OPTIMIZATION_ANALYSIS.md](LFM_BRAM_PIPELINE_OPTIMIZATION_ANALYSIS.md)。
 
 ## 目录说明
 
@@ -176,10 +196,12 @@ V11_LFM_RANGE/
 ├─ V11_LFM_RANGE.xpr             独立 Vivado 工程
 ├─ rtl/lfm_radar_core.v          发射、采集、背景扣除和相关测距核心
 ├─ mem/lfm_400mhz_4096.mem       400 MHz LFM ROM
+├─ mem/generate_lfm_400mhz_4096.py 专用 ROM 生成器
 ├─ sim/tb_lfm_radar_core.sv      可重复的延迟 7 点自检仿真
 ├─ scripts/                       ROM、BD、仿真、综合和 Vitis 脚本
 ├─ sw/src/main.c                 RFDC 启动、命令和距离显示程序
-└─ V11_LFM_RANGE_CONTEXT.md      设计参数、接口和后续开发上下文
+├─ V11_LFM_RANGE_CONTEXT.md      设计参数、接口和后续开发上下文
+└─ LFM_BRAM_PIPELINE_OPTIMIZATION_ANALYSIS.md  BRAM/流水优化与吞吐分析
 ```
 
 ## Block Design IP 功能分析
@@ -206,4 +228,7 @@ V11_LFM_RANGE/
 - 当前只输出最大相关峰，即单目标“最近/最强候选”模式；多目标 CFAR、速度估计和目标跟踪不在 V11 第一阶段范围内。
 - 静态背景扣除能消除稳定泄漏，但不能完全抑制 PA 相位噪声、环行器随温漂变化的泄漏或动态多径。自由空间测试时应定期重新 `BGCAL`。
 - 0.5 m 是高风险近距端点。能否达到取决于环行器隔离、天线振铃、ADC 不饱和以及标定稳定性，而不只取决于数字算法。
-- 后续如需更高更新率，可把标量相关器改为多 lane/FFT 脉压；如需更低误差，可加入多帧相干/非相干积累、峰形拟合和温漂校准。
+- 当前 10 kHz PRF 是发射脉冲重复率，不是距离结果输出率。相关器只在空闲时接受新采集，当前约输出 59 个结果/秒。
+- 后续吞吐优化优先顺序是：将标量数据通路改成真正 `II=1`，再利用 128-bit BRAM 做 4-lane MAC，然后按目标结果率增加 lag engine 和 ping-pong 采集缓存；严格 10 kHz 逐脉冲测距还应评估 FFT 脉压。
+- 三乘法复数乘法可以节省 25% DSP，但当前单核只使用 4/4272 个 DSP，现阶段 BRAM 读带宽和流水吞吐比 DSP 数量更优先。
+- 如需更低误差，可加入多帧相干/非相干积累、峰形拟合和温漂校准。

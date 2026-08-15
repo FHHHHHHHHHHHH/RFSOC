@@ -23,8 +23,8 @@
 //   address bits 13:2 : LUT address (0..4095)
 //   write data         : {gain_q[15:0], gain_i[15:0]}
 //
-// Coefficient RAM write ports use s_axi_aclk while their read ports use
-// axis_clk, so no AXI clock converter is needed.
+// Coefficient writes cross into axis_clk through an asynchronous command FIFO.
+// The core then performs all coefficient RAM accesses in the DAC sample domain.
 module axis_dpd_mp_4lane_dual_impl #(
     parameter integer C_S_AXI_ADDR_WIDTH = 18,
     parameter integer C_S_AXI_DATA_WIDTH = 32
@@ -106,6 +106,7 @@ module axis_dpd_mp_4lane_dual_impl #(
 );
 
     localparam [31:0] CORE_VERSION = 32'h4450_4401;
+    localparam integer CFG_FIFO_WIDTH = 47;
 
     reg aw_hold;
     reg w_hold;
@@ -117,20 +118,28 @@ module axis_dpd_mp_4lane_dual_impl #(
     reg commit_toggle_axi;
     reg clear_toggle_axi;
 
-    reg cfg_we;
-    reg cfg_bank;
-    reg [1:0] cfg_tap;
-    reg [11:0] cfg_addr;
-    reg [31:0] cfg_wdata;
+    reg cfg_fifo_wr_en;
+    wire [CFG_FIFO_WIDTH-1:0] cfg_fifo_din;
+    wire [CFG_FIFO_WIDTH-1:0] cfg_fifo_dout;
+    wire cfg_fifo_full;
+    wire cfg_fifo_empty;
+    wire cfg_fifo_wr_rst_busy;
+    wire cfg_fifo_rd_rst_busy;
+    wire cfg_fifo_rd_en;
+    wire cfg_we_axis;
+    wire cfg_bank_axis;
+    wire [1:0] cfg_tap_axis;
+    wire [11:0] cfg_addr_axis;
+    wire [31:0] cfg_wdata_axis;
 
-    reg enable_sync1;
-    reg enable_sync2;
-    reg commit_sync1;
-    reg commit_sync2;
+    (* ASYNC_REG = "TRUE" *) reg enable_sync1;
+    (* ASYNC_REG = "TRUE" *) reg enable_sync2;
+    (* ASYNC_REG = "TRUE" *) reg commit_sync1;
+    (* ASYNC_REG = "TRUE" *) reg commit_sync2;
     reg commit_seen;
     reg commit_pulse_axis;
-    reg clear_sync1;
-    reg clear_sync2;
+    (* ASYNC_REG = "TRUE" *) reg clear_sync1;
+    (* ASYNC_REG = "TRUE" *) reg clear_sync2;
     reg clear_seen;
     reg clear_pulse_axis;
 
@@ -139,12 +148,12 @@ module axis_dpd_mp_4lane_dual_impl #(
     wire [127:0] core_axis_tdata;
     wire core_axis_tvalid;
 
-    reg active_bank_sync1;
-    reg active_bank_sync2;
-    reg enable_status_sync1;
-    reg enable_status_sync2;
-    reg [31:0] clip_gray_sync1;
-    reg [31:0] clip_gray_sync2;
+    (* ASYNC_REG = "TRUE" *) reg active_bank_sync1;
+    (* ASYNC_REG = "TRUE" *) reg active_bank_sync2;
+    (* ASYNC_REG = "TRUE" *) reg enable_status_sync1;
+    (* ASYNC_REG = "TRUE" *) reg enable_status_sync2;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] clip_gray_sync1;
+    (* ASYNC_REG = "TRUE" *) reg [31:0] clip_gray_sync2;
     wire [31:0] clip_count_binary_axi;
 
     integer byte_i;
@@ -187,6 +196,19 @@ module axis_dpd_mp_4lane_dual_impl #(
     assign m0_axis_tvalid = core_axis_tvalid;
     assign m1_axis_tvalid = core_axis_tvalid;
 
+    assign cfg_fifo_din = {
+        awaddr_hold[16],
+        awaddr_hold[15:14],
+        awaddr_hold[13:2],
+        apply_write_strobes(32'd0, wdata_hold, wstrb_hold)
+    };
+    assign cfg_fifo_rd_en = !cfg_fifo_empty && !cfg_fifo_rd_rst_busy && axis_resetn;
+    assign cfg_we_axis    = cfg_fifo_rd_en;
+    assign cfg_bank_axis  = cfg_fifo_dout[46];
+    assign cfg_tap_axis   = cfg_fifo_dout[45:44];
+    assign cfg_addr_axis  = cfg_fifo_dout[43:32];
+    assign cfg_wdata_axis = cfg_fifo_dout[31:0];
+
     // AXI-Lite write channel and coefficient write decoding.
     always @(posedge s_axi_aclk) begin
         if (!s_axi_aresetn) begin
@@ -199,13 +221,9 @@ module axis_dpd_mp_4lane_dual_impl #(
             dpd_enable_axi   <= 1'b0;
             commit_toggle_axi<= 1'b0;
             clear_toggle_axi <= 1'b0;
-            cfg_we           <= 1'b0;
-            cfg_bank         <= 1'b0;
-            cfg_tap          <= 2'd0;
-            cfg_addr         <= 12'd0;
-            cfg_wdata        <= 32'd0;
+            cfg_fifo_wr_en   <= 1'b0;
         end else begin
-            cfg_we <= 1'b0;
+            cfg_fifo_wr_en <= 1'b0;
 
             if (s_axi_awready && s_axi_awvalid) begin
                 aw_hold     <= 1'b1;
@@ -219,25 +237,29 @@ module axis_dpd_mp_4lane_dual_impl #(
             end
 
             if (aw_hold && w_hold && !s_axi_bvalid) begin
-                aw_hold      <= 1'b0;
-                w_hold       <= 1'b0;
-                s_axi_bvalid <= 1'b1;
-
                 if (awaddr_hold[17]) begin
-                    // Coefficient memory window.  Partial writes are allowed
-                    // and zero-fill bytes not selected by WSTRB.
-                    cfg_we    <= 1'b1;
-                    cfg_bank  <= awaddr_hold[16];
-                    cfg_tap   <= awaddr_hold[15:14];
-                    cfg_addr  <= awaddr_hold[13:2];
-                    cfg_wdata <= apply_write_strobes(32'd0, wdata_hold, wstrb_hold);
-                end else if (awaddr_hold[11:2] == 10'd0) begin
-                    if (wstrb_hold[0]) begin
-                        dpd_enable_axi <= wdata_hold[0];
-                        if (wdata_hold[1])
-                            commit_toggle_axi <= ~commit_toggle_axi;
-                        if (wdata_hold[2])
-                            clear_toggle_axi <= ~clear_toggle_axi;
+                    // Keep the AXI transaction pending while the CDC FIFO is
+                    // full.  This guarantees that coefficient writes cannot
+                    // be silently dropped.
+                    if (!cfg_fifo_full && !cfg_fifo_wr_rst_busy) begin
+                        aw_hold         <= 1'b0;
+                        w_hold          <= 1'b0;
+                        s_axi_bvalid    <= 1'b1;
+                        cfg_fifo_wr_en  <= 1'b1;
+                    end
+                end else begin
+                    aw_hold      <= 1'b0;
+                    w_hold       <= 1'b0;
+                    s_axi_bvalid <= 1'b1;
+
+                    if (awaddr_hold[11:2] == 10'd0) begin
+                        if (wstrb_hold[0]) begin
+                            dpd_enable_axi <= wdata_hold[0];
+                            if (wdata_hold[1])
+                                commit_toggle_axi <= ~commit_toggle_axi;
+                            if (wdata_hold[2])
+                                clear_toggle_axi <= ~clear_toggle_axi;
+                        end
                     end
                 end
             end
@@ -246,6 +268,53 @@ module axis_dpd_mp_4lane_dual_impl #(
                 s_axi_bvalid <= 1'b0;
         end
     end
+
+    xpm_fifo_async #(
+        .FIFO_MEMORY_TYPE    ("distributed"),
+        .ECC_MODE            ("no_ecc"),
+        .RELATED_CLOCKS      (0),
+        .FIFO_WRITE_DEPTH    (16),
+        .WRITE_DATA_WIDTH    (CFG_FIFO_WIDTH),
+        .WR_DATA_COUNT_WIDTH (5),
+        .PROG_FULL_THRESH    (10),
+        .FULL_RESET_VALUE    (0),
+        .READ_MODE           ("fwft"),
+        .FIFO_READ_LATENCY   (0),
+        .READ_DATA_WIDTH     (CFG_FIFO_WIDTH),
+        .RD_DATA_COUNT_WIDTH (5),
+        .PROG_EMPTY_THRESH   (10),
+        .USE_ADV_FEATURES    ("0000"),
+        .DOUT_RESET_VALUE    ("0"),
+        .CDC_SYNC_STAGES     (2),
+        .WAKEUP_TIME         (0)
+    ) u_cfg_command_fifo (
+        .rst           (!s_axi_aresetn),
+        .wr_clk        (s_axi_aclk),
+        .wr_en         (cfg_fifo_wr_en),
+        .din           (cfg_fifo_din),
+        .full          (cfg_fifo_full),
+        .overflow      (),
+        .prog_full     (),
+        .wr_data_count (),
+        .almost_full   (),
+        .wr_ack        (),
+        .wr_rst_busy   (cfg_fifo_wr_rst_busy),
+        .rd_clk        (axis_clk),
+        .rd_en         (cfg_fifo_rd_en),
+        .dout          (cfg_fifo_dout),
+        .empty         (cfg_fifo_empty),
+        .underflow     (),
+        .rd_rst_busy   (cfg_fifo_rd_rst_busy),
+        .prog_empty    (),
+        .rd_data_count (),
+        .almost_empty  (),
+        .data_valid    (),
+        .sleep         (1'b0),
+        .injectsbiterr (1'b0),
+        .injectdbiterr (1'b0),
+        .sbiterr       (),
+        .dbiterr       ()
+    );
 
     // AXI-Lite read channel.  Coefficient memory is intentionally write-only;
     // software verifies tables before loading them and reads status here.
@@ -330,12 +399,11 @@ module axis_dpd_mp_4lane_dual_impl #(
         .clear_clip_pulse  (clear_pulse_axis),
         .active_bank       (core_active_bank),
         .clip_count_gray   (clip_count_gray_axis),
-        .cfg_clk           (s_axi_aclk),
-        .cfg_we            (cfg_we),
-        .cfg_bank          (cfg_bank),
-        .cfg_tap           (cfg_tap),
-        .cfg_addr          (cfg_addr),
-        .cfg_wdata         (cfg_wdata)
+        .cfg_we            (cfg_we_axis),
+        .cfg_bank          (cfg_bank_axis),
+        .cfg_tap           (cfg_tap_axis),
+        .cfg_addr          (cfg_addr_axis),
+        .cfg_wdata         (cfg_wdata_axis)
     );
 
 endmodule

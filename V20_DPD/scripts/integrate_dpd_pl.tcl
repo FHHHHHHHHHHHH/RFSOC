@@ -3,6 +3,7 @@ set project_dir [file dirname $script_dir]
 set project_file [file join $project_dir V20_DPD.xpr]
 set rtl_dir [file join $project_dir V20_DPD.srcs sources_1 new]
 set sim_dir [file join $project_dir V20_DPD.srcs sim_1 new]
+set constr_dir [file join $project_dir V20_DPD.srcs constrs_1 new]
 
 proc ensure_bd_intf_net {net_name pin_names} {
     set pin_objects {}
@@ -62,6 +63,13 @@ foreach rtl_file [list \
     }
 }
 update_compile_order -fileset sources_1
+
+set dpd_clock_constraints [file join $constr_dir dpd_clock_groups.xdc]
+if {[llength [get_files -quiet $dpd_clock_constraints]] == 0} {
+    add_files -norecurse -fileset constrs_1 $dpd_clock_constraints
+}
+set_property used_in_synthesis false [get_files $dpd_clock_constraints]
+set_property used_in_implementation true [get_files $dpd_clock_constraints]
 
 foreach sim_file [list \
         [file join $sim_dir tb_dpd_mp_4lane_core.sv] \

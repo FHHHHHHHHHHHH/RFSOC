@@ -128,26 +128,35 @@ module axis_dpd_lab_controller_impl #(
     reg capture_clear_toggle_axi;
     reg [12:0] playback_length_axi;
     reg [12:0] capture_target_axi;
+    reg playback_length_toggle_axi;
+    reg capture_target_toggle_axi;
 
     (* ram_style = "block" *) reg [31:0] waveform_bank0 [0:1023];
     (* ram_style = "block" *) reg [31:0] waveform_bank1 [0:1023];
     (* ram_style = "block" *) reg [31:0] waveform_bank2 [0:1023];
     (* ram_style = "block" *) reg [31:0] waveform_bank3 [0:1023];
 
-    (* ram_style = "block" *) reg [63:0] capture_even [0:2047];
-    (* ram_style = "block" *) reg [63:0] capture_odd  [0:2047];
-
-    reg playback_enable_sync1;
-    reg playback_enable_sync2;
-    reg [12:0] playback_length_sync1;
-    reg [12:0] playback_length_sync2;
-    reg [12:0] capture_target_sync1;
-    reg [12:0] capture_target_sync2;
-    reg capture_trigger_sync1;
-    reg capture_trigger_sync2;
+    (* ASYNC_REG = "TRUE" *) reg playback_enable_sync1;
+    (* ASYNC_REG = "TRUE" *) reg playback_enable_sync2;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] playback_length_sync1;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] playback_length_sync2;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] capture_target_sync1;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] capture_target_sync2;
+    (* ASYNC_REG = "TRUE" *) reg playback_length_toggle_sync1;
+    (* ASYNC_REG = "TRUE" *) reg playback_length_toggle_sync2;
+    (* ASYNC_REG = "TRUE" *) reg playback_length_toggle_sync3;
+    (* ASYNC_REG = "TRUE" *) reg capture_target_toggle_sync1;
+    (* ASYNC_REG = "TRUE" *) reg capture_target_toggle_sync2;
+    (* ASYNC_REG = "TRUE" *) reg capture_target_toggle_sync3;
+    reg playback_length_toggle_seen;
+    reg capture_target_toggle_seen;
+    reg [12:0] playback_length_axis;
+    reg [12:0] capture_target_axis;
+    (* ASYNC_REG = "TRUE" *) reg capture_trigger_sync1;
+    (* ASYNC_REG = "TRUE" *) reg capture_trigger_sync2;
     reg capture_trigger_seen;
-    reg capture_clear_sync1;
-    reg capture_clear_sync2;
+    (* ASYNC_REG = "TRUE" *) reg capture_clear_sync1;
+    (* ASYNC_REG = "TRUE" *) reg capture_clear_sync2;
     reg capture_clear_seen;
 
     reg [11:0] playback_sample_index;
@@ -157,19 +166,31 @@ module axis_dpd_lab_controller_impl #(
     reg capture_done_axis;
     reg [12:0] capture_count_axis;
 
-    reg playback_active_sync1;
-    reg playback_active_sync2;
-    reg capture_busy_sync1;
-    reg capture_busy_sync2;
-    reg capture_done_sync1;
-    reg capture_done_sync2;
-    reg [12:0] capture_count_gray_sync1;
-    reg [12:0] capture_count_gray_sync2;
+    wire capture_write_enable;
+    wire [10:0] capture_write_addr;
+    wire [63:0] capture_even_write_data;
+    wire [63:0] capture_odd_write_data;
+    wire [63:0] capture_even_read_data;
+    wire [63:0] capture_odd_read_data;
+    reg [10:0] capture_read_addr;
+    reg capture_read_en;
+    reg capture_read_pending;
+    reg capture_read_select_odd;
+    reg capture_read_upper_word;
+    reg [1:0] capture_read_wait;
+
+    (* ASYNC_REG = "TRUE" *) reg playback_active_sync1;
+    (* ASYNC_REG = "TRUE" *) reg playback_active_sync2;
+    (* ASYNC_REG = "TRUE" *) reg capture_busy_sync1;
+    (* ASYNC_REG = "TRUE" *) reg capture_busy_sync2;
+    (* ASYNC_REG = "TRUE" *) reg capture_done_sync1;
+    (* ASYNC_REG = "TRUE" *) reg capture_done_sync2;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] capture_count_gray_sync1;
+    (* ASYNC_REG = "TRUE" *) reg [12:0] capture_count_gray_sync2;
 
     wire capture_input_valid = m_tx_axis_tvalid &&
                                s_adc_i_axis_tvalid && s_adc_q_axis_tvalid;
-    wire [12:0] capture_count_gray_axis =
-        (capture_count_axis >> 1) ^ capture_count_axis;
+    reg [12:0] capture_count_gray_axis;
     wire [12:0] capture_count_binary_axi;
 
     function automatic [31:0] apply_write_strobes;
@@ -198,7 +219,7 @@ module axis_dpd_lab_controller_impl #(
     assign s_axi_awready = !aw_hold && !s_axi_bvalid;
     assign s_axi_wready  = !w_hold && !s_axi_bvalid;
     assign s_axi_bresp   = 2'b00;
-    assign s_axi_arready = !s_axi_rvalid;
+    assign s_axi_arready = !s_axi_rvalid && !capture_read_pending;
     assign s_axi_rresp   = 2'b00;
 
     assign m_tx_axis_tdata  = playback_enable_sync2 ? playback_data_axis
@@ -211,6 +232,17 @@ module axis_dpd_lab_controller_impl #(
     assign capture_busy = capture_busy_sync2;
     assign capture_done = capture_done_sync2;
     assign capture_count = capture_count_binary_axi;
+
+    assign capture_write_enable = capture_busy_axis && capture_input_valid;
+    assign capture_write_addr = capture_count_axis[11:1];
+    assign capture_even_write_data = {
+        s_adc_q_axis_tdata[15:0], s_adc_i_axis_tdata[15:0],
+        m_tx_axis_tdata[31:16], m_tx_axis_tdata[15:0]
+    };
+    assign capture_odd_write_data = {
+        s_adc_q_axis_tdata[31:16], s_adc_i_axis_tdata[31:16],
+        m_tx_axis_tdata[95:80], m_tx_axis_tdata[79:64]
+    };
 
     // AXI writes: control registers and waveform memory.
     always @(posedge s_axi_aclk) begin
@@ -226,6 +258,8 @@ module axis_dpd_lab_controller_impl #(
             capture_clear_toggle_axi <= 1'b0;
             playback_length_axi <= 13'd4096;
             capture_target_axi <= 13'd4096;
+            playback_length_toggle_axi <= 1'b0;
+            capture_target_toggle_axi <= 1'b0;
         end else begin
             if (s_axi_awready && s_axi_awvalid) begin
                 aw_hold <= 1'b1;
@@ -273,6 +307,7 @@ module axis_dpd_lab_controller_impl #(
                                 playback_length_axi <= 13'd4096;
                             else
                                 playback_length_axi <= {wdata_hold[12:2], 2'b00};
+                            playback_length_toggle_axi <= ~playback_length_toggle_axi;
                         end
                         10'd3: if (wstrb_hold[0] || wstrb_hold[1]) begin
                             if (wdata_hold[12:0] < 13'd2)
@@ -281,6 +316,7 @@ module axis_dpd_lab_controller_impl #(
                                 capture_target_axi <= 13'd4096;
                             else
                                 capture_target_axi <= {wdata_hold[12:1], 1'b0};
+                            capture_target_toggle_axi <= ~capture_target_toggle_axi;
                         end
                         default: begin end
                     endcase
@@ -297,20 +333,41 @@ module axis_dpd_lab_controller_impl #(
         if (!s_axi_aresetn) begin
             s_axi_rvalid <= 1'b0;
             s_axi_rdata <= 32'd0;
+            capture_read_addr <= 11'd0;
+            capture_read_en <= 1'b0;
+            capture_read_pending <= 1'b0;
+            capture_read_select_odd <= 1'b0;
+            capture_read_upper_word <= 1'b0;
+            capture_read_wait <= 2'd0;
         end else begin
-            if (s_axi_arready && s_axi_arvalid) begin
-                s_axi_rvalid <= 1'b1;
-                if (s_axi_araddr[17:15] == 3'b100) begin
-                    if (s_axi_araddr[3]) begin
-                        s_axi_rdata <= s_axi_araddr[2]
-                            ? capture_odd[s_axi_araddr[14:4]][63:32]
-                            : capture_odd[s_axi_araddr[14:4]][31:0];
-                    end else begin
-                        s_axi_rdata <= s_axi_araddr[2]
-                            ? capture_even[s_axi_araddr[14:4]][63:32]
-                            : capture_even[s_axi_araddr[14:4]][31:0];
-                    end
+            capture_read_en <= 1'b0;
+
+            if (capture_read_pending) begin
+                if (capture_read_wait > 2'd1) begin
+                    capture_read_wait <= capture_read_wait - 2'd1;
                 end else begin
+                    capture_read_pending <= 1'b0;
+                    capture_read_wait <= 2'd0;
+                    s_axi_rvalid <= 1'b1;
+                    if (capture_read_select_odd)
+                        s_axi_rdata <= capture_read_upper_word
+                            ? capture_odd_read_data[63:32]
+                            : capture_odd_read_data[31:0];
+                    else
+                        s_axi_rdata <= capture_read_upper_word
+                            ? capture_even_read_data[63:32]
+                            : capture_even_read_data[31:0];
+                end
+            end else if (s_axi_arready && s_axi_arvalid) begin
+                if (s_axi_araddr[17:15] == 3'b100) begin
+                    capture_read_addr <= s_axi_araddr[14:4];
+                    capture_read_select_odd <= s_axi_araddr[3];
+                    capture_read_upper_word <= s_axi_araddr[2];
+                    capture_read_en <= 1'b1;
+                    capture_read_pending <= 1'b1;
+                    capture_read_wait <= 2'd2;
+                end else begin
+                    s_axi_rvalid <= 1'b1;
                     case (s_axi_araddr[11:2])
                         10'd0: s_axi_rdata <= {31'd0, playback_enable_axi};
                         10'd1: s_axi_rdata <= {29'd0, capture_done_sync2,
@@ -329,6 +386,93 @@ module axis_dpd_lab_controller_impl #(
         end
     end
 
+    // Explicit independent-clock block RAMs keep the 184.32 MHz capture write
+    // path and the 100 MHz AXI read path physically separated.  The AXI read
+    // state machine above accounts for the registered BRAM output latency.
+    xpm_memory_sdpram #(
+        .MEMORY_SIZE        (131072),
+        .MEMORY_PRIMITIVE   ("block"),
+        .CLOCKING_MODE      ("independent_clock"),
+        .ECC_MODE           ("no_ecc"),
+        .MEMORY_INIT_FILE   ("none"),
+        .MEMORY_INIT_PARAM  ("0"),
+        .USE_MEM_INIT       (0),
+        .WAKEUP_TIME        ("disable_sleep"),
+        .AUTO_SLEEP_TIME    (0),
+        .MESSAGE_CONTROL    (0),
+        .USE_EMBEDDED_CONSTRAINT (0),
+        .MEMORY_OPTIMIZATION("true"),
+        .WRITE_DATA_WIDTH_A (64),
+        .BYTE_WRITE_WIDTH_A (64),
+        .ADDR_WIDTH_A       (11),
+        .READ_DATA_WIDTH_B  (64),
+        .ADDR_WIDTH_B       (11),
+        .READ_RESET_VALUE_B ("0"),
+        .READ_LATENCY_B     (1),
+        .WRITE_MODE_B       ("no_change"),
+        .RST_MODE_A         ("SYNC"),
+        .RST_MODE_B         ("SYNC")
+    ) u_capture_even_ram (
+        .clka          (axis_clk),
+        .ena           (capture_write_enable),
+        .wea           (capture_write_enable),
+        .addra         (capture_write_addr),
+        .dina          (capture_even_write_data),
+        .injectsbiterra(1'b0),
+        .injectdbiterra(1'b0),
+        .clkb          (s_axi_aclk),
+        .rstb          (!s_axi_aresetn),
+        .enb           (capture_read_en),
+        .regceb        (1'b1),
+        .addrb         (capture_read_addr),
+        .doutb         (capture_even_read_data),
+        .sbiterrb      (),
+        .dbiterrb      (),
+        .sleep         (1'b0)
+    );
+
+    xpm_memory_sdpram #(
+        .MEMORY_SIZE        (131072),
+        .MEMORY_PRIMITIVE   ("block"),
+        .CLOCKING_MODE      ("independent_clock"),
+        .ECC_MODE           ("no_ecc"),
+        .MEMORY_INIT_FILE   ("none"),
+        .MEMORY_INIT_PARAM  ("0"),
+        .USE_MEM_INIT       (0),
+        .WAKEUP_TIME        ("disable_sleep"),
+        .AUTO_SLEEP_TIME    (0),
+        .MESSAGE_CONTROL    (0),
+        .USE_EMBEDDED_CONSTRAINT (0),
+        .MEMORY_OPTIMIZATION("true"),
+        .WRITE_DATA_WIDTH_A (64),
+        .BYTE_WRITE_WIDTH_A (64),
+        .ADDR_WIDTH_A       (11),
+        .READ_DATA_WIDTH_B  (64),
+        .ADDR_WIDTH_B       (11),
+        .READ_RESET_VALUE_B ("0"),
+        .READ_LATENCY_B     (1),
+        .WRITE_MODE_B       ("no_change"),
+        .RST_MODE_A         ("SYNC"),
+        .RST_MODE_B         ("SYNC")
+    ) u_capture_odd_ram (
+        .clka          (axis_clk),
+        .ena           (capture_write_enable),
+        .wea           (capture_write_enable),
+        .addra         (capture_write_addr),
+        .dina          (capture_odd_write_data),
+        .injectsbiterra(1'b0),
+        .injectdbiterra(1'b0),
+        .clkb          (s_axi_aclk),
+        .rstb          (!s_axi_aresetn),
+        .enb           (capture_read_en),
+        .regceb        (1'b1),
+        .addrb         (capture_read_addr),
+        .doutb         (capture_odd_read_data),
+        .sbiterrb      (),
+        .dbiterrb      (),
+        .sleep         (1'b0)
+    );
+
     // AXI-to-sample clock control crossings.
     always @(posedge axis_clk) begin
         if (!axis_resetn) begin
@@ -338,6 +482,16 @@ module axis_dpd_lab_controller_impl #(
             playback_length_sync2 <= 13'd4096;
             capture_target_sync1 <= 13'd4096;
             capture_target_sync2 <= 13'd4096;
+            playback_length_toggle_sync1 <= 1'b0;
+            playback_length_toggle_sync2 <= 1'b0;
+            playback_length_toggle_sync3 <= 1'b0;
+            capture_target_toggle_sync1 <= 1'b0;
+            capture_target_toggle_sync2 <= 1'b0;
+            capture_target_toggle_sync3 <= 1'b0;
+            playback_length_toggle_seen <= 1'b0;
+            capture_target_toggle_seen <= 1'b0;
+            playback_length_axis <= 13'd4096;
+            capture_target_axis <= 13'd4096;
             capture_trigger_sync1 <= 1'b0;
             capture_trigger_sync2 <= 1'b0;
             capture_trigger_seen <= 1'b0;
@@ -351,6 +505,25 @@ module axis_dpd_lab_controller_impl #(
             playback_length_sync2 <= playback_length_sync1;
             capture_target_sync1 <= capture_target_axi;
             capture_target_sync2 <= capture_target_sync1;
+            playback_length_toggle_sync1 <= playback_length_toggle_axi;
+            playback_length_toggle_sync2 <= playback_length_toggle_sync1;
+            playback_length_toggle_sync3 <= playback_length_toggle_sync2;
+            capture_target_toggle_sync1 <= capture_target_toggle_axi;
+            capture_target_toggle_sync2 <= capture_target_toggle_sync1;
+            capture_target_toggle_sync3 <= capture_target_toggle_sync2;
+
+            // The update toggles deliberately travel one synchronizer stage
+            // behind the data bus.  By the time an update is observed, the
+            // corresponding multi-bit value has been stable for two axis
+            // clocks and can be captured coherently.
+            if (playback_length_toggle_sync3 != playback_length_toggle_seen) begin
+                playback_length_toggle_seen <= playback_length_toggle_sync3;
+                playback_length_axis <= playback_length_sync2;
+            end
+            if (capture_target_toggle_sync3 != capture_target_toggle_seen) begin
+                capture_target_toggle_seen <= capture_target_toggle_sync3;
+                capture_target_axis <= capture_target_sync2;
+            end
             capture_trigger_sync1 <= capture_trigger_toggle_axi;
             capture_trigger_sync2 <= capture_trigger_sync1;
             capture_clear_sync1 <= capture_clear_toggle_axi;
@@ -376,7 +549,7 @@ module axis_dpd_lab_controller_impl #(
                 waveform_bank1[playback_sample_index[11:2]],
                 waveform_bank0[playback_sample_index[11:2]]
             };
-            if ({1'b0, playback_sample_index} + 13'd4 >= playback_length_sync2)
+            if ({1'b0, playback_sample_index} + 13'd4 >= playback_length_axis)
                 playback_sample_index <= 12'd0;
             else
                 playback_sample_index <= playback_sample_index + 12'd4;
@@ -393,7 +566,13 @@ module axis_dpd_lab_controller_impl #(
             capture_busy_axis <= 1'b0;
             capture_done_axis <= 1'b0;
             capture_count_axis <= 13'd0;
+            capture_count_gray_axis <= 13'd0;
         end else begin
+            // Keep all Gray conversion logic in the source clock domain so
+            // the first AXI-domain synchronizer stage is driven by registers.
+            capture_count_gray_axis <=
+                (capture_count_axis >> 1) ^ capture_count_axis;
+
             if (capture_clear_sync2 != capture_clear_seen) begin
                 capture_busy_axis <= 1'b0;
                 capture_done_axis <= 1'b0;
@@ -405,17 +584,8 @@ module axis_dpd_lab_controller_impl #(
                 capture_done_axis <= 1'b0;
                 capture_count_axis <= 13'd0;
             end else if (capture_busy_axis && capture_input_valid) begin
-                capture_even[capture_count_axis[11:1]] <= {
-                    s_adc_q_axis_tdata[15:0], s_adc_i_axis_tdata[15:0],
-                    m_tx_axis_tdata[31:16], m_tx_axis_tdata[15:0]
-                };
-                capture_odd[capture_count_axis[11:1]] <= {
-                    s_adc_q_axis_tdata[31:16], s_adc_i_axis_tdata[31:16],
-                    m_tx_axis_tdata[95:80], m_tx_axis_tdata[79:64]
-                };
-
-                if (capture_count_axis + 13'd2 >= capture_target_sync2) begin
-                    capture_count_axis <= capture_target_sync2;
+                if (capture_count_axis + 13'd2 >= capture_target_axis) begin
+                    capture_count_axis <= capture_target_axis;
                     capture_busy_axis <= 1'b0;
                     capture_done_axis <= 1'b1;
                 end else begin

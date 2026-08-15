@@ -3,9 +3,7 @@
 module tb_dpd_mp_4lane_core;
 
     reg axis_clk = 1'b0;
-    reg cfg_clk  = 1'b0;
     always #2.5 axis_clk = ~axis_clk;
-    always #3.5 cfg_clk  = ~cfg_clk;
 
     reg axis_resetn = 1'b0;
     reg [127:0] s_axis_tdata = 128'd0;
@@ -57,13 +55,13 @@ module tb_dpd_mp_4lane_core;
         input signed [15:0] gain_i;
         input signed [15:0] gain_q;
         begin
-            @(negedge cfg_clk);
+            @(negedge axis_clk);
             cfg_bank  <= bank;
             cfg_tap   <= tap;
             cfg_addr  <= address;
             cfg_wdata <= {gain_q, gain_i};
             cfg_we    <= 1'b1;
-            @(negedge cfg_clk);
+            @(negedge axis_clk);
             cfg_we    <= 1'b0;
         end
     endtask
@@ -107,7 +105,6 @@ module tb_dpd_mp_4lane_core;
         .clear_clip_pulse(clear_clip_pulse),
         .active_bank(active_bank),
         .clip_count_gray(clip_count_gray),
-        .cfg_clk(cfg_clk),
         .cfg_we(cfg_we),
         .cfg_bank(cfg_bank),
         .cfg_tap(cfg_tap),
@@ -213,4 +210,3 @@ module tb_dpd_mp_4lane_core;
     end
 
 endmodule
-

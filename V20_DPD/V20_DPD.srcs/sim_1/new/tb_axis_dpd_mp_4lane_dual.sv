@@ -153,20 +153,11 @@ module tb_axis_dpd_mp_4lane_dual;
             errors = errors + 1;
         end
 
-        // Bank 1, tap 2, LUT address 0x123.
-        axi_write(18'h3848C, 32'hA55A_1357, 4'b1111);
-        repeat (3) @(posedge s_axi_aclk);
-        if (dut.u_impl.u_dpd_core.g_lane_mem[0].g_tap_mem[2].coefficient_bank1[12'h123]
-                !== 32'hA55A_1357 ||
-            dut.u_impl.u_dpd_core.g_lane_mem[1].g_tap_mem[2].coefficient_bank1[12'h123]
-                !== 32'hA55A_1357 ||
-            dut.u_impl.u_dpd_core.g_lane_mem[2].g_tap_mem[2].coefficient_bank1[12'h123]
-                !== 32'hA55A_1357 ||
-            dut.u_impl.u_dpd_core.g_lane_mem[3].g_tap_mem[2].coefficient_bank1[12'h123]
-                !== 32'hA55A_1357) begin
-            $display("ERROR: replicated coefficient write mismatch");
-            errors = errors + 1;
-        end
+        // Bank 1, tap 0, LUT address 0: unity complex gain.  Small samples
+        // below map to address zero, providing an end-to-end check that the
+        // AXI write crossed the asynchronous FIFO and reached all lane RAMs.
+        axi_write(18'h30000, 32'h0000_4000, 4'b1111);
+        repeat (10) @(posedge axis_clk);
 
         axi_write(18'h00000, 32'h0000_0001, 4'b0001);
         repeat (10) @(posedge s_axi_aclk);
@@ -181,6 +172,25 @@ module tb_axis_dpd_mp_4lane_dual;
         axi_read(18'h00004, read_value);
         if (read_value[1:0] !== 2'b11 || !dpd_active_bank) begin
             $display("ERROR: committed status expected 2'b11, got %b", read_value[1:0]);
+            errors = errors + 1;
+        end
+
+
+        @(negedge axis_clk);
+        s_axis_tdata <= {
+            32'h0000_0040, 32'h0000_0030,
+            32'h0000_0020, 32'h0000_0010
+        };
+        s_axis_tvalid <= 1'b1;
+        @(negedge axis_clk);
+        s_axis_tvalid <= 1'b0;
+        @(posedge m0_axis_tvalid);
+        #0.1;
+        if (m0_axis_tdata !== {
+                32'h0000_0040, 32'h0000_0030,
+                32'h0000_0020, 32'h0000_0010
+            } || m1_axis_tdata !== m0_axis_tdata) begin
+            $display("ERROR: coefficient FIFO/RAM datapath mismatch: %h", m0_axis_tdata);
             errors = errors + 1;
         end
 

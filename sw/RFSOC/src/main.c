@@ -13,6 +13,7 @@
 #include "xrfdc.h"
 #include "xrfdc_clk.h"
 #include "app_config.h"
+#include "dpd_runtime.h"
 
 #define PREAMBLE_BYTES       4U
 #define SYNC_BYTES           4U
@@ -498,6 +499,7 @@ static void PrintHelp(void)
     xil_printf("  AMPL <0..1>       set equal QMC gain on both DAC channels\r\n");
     xil_printf("  DACR / ADCR       mixer readback\r\n");
     xil_printf("  STAT              RFDC clock and block status\r\n");
+    DpdPrintHelp();
     xil_printf("  HELP              show this text\r\n");
     xil_printf("Receiver expects DAC-ADC frequency difference of +10 MHz.\r\n");
 }
@@ -613,6 +615,8 @@ static void ProcessCommand(char *line)
                    LoopRxErrors);
     } else if (strcmp(command, "HELP") == 0 || command[0] == '\0') {
         PrintHelp();
+    } else if (DpdProcessCommand(command, argument)) {
+        /* Command handled by the DPD/LAB runtime. */
     } else {
         xil_printf("\r\n[ERR] unknown command: %s\r\n", command);
         PrintHelp();
@@ -651,7 +655,7 @@ int main(void)
     int status;
 
     init_platform();
-    xil_printf("\r\nZCU111 V10 constant-envelope DBPSK loopback\r\n");
+    xil_printf("\r\nZCU111 V20 DBPSK + software/hardware MP-DPD laboratory\r\n");
     xil_printf("Configuring LMK/LMX clocks...\r\n");
     LMK04208ClockConfig(1, LMK04208_CKin);
     status = LMX2594ClockConfig(1, 2949120, 5898240);
@@ -692,6 +696,8 @@ int main(void)
         xil_printf("[FATAL] default RF configuration failed\r\n");
         return XST_FAILURE;
     }
+
+    DpdRuntimePrintVersions();
 
     PrintStatus();
     PrintHelp();

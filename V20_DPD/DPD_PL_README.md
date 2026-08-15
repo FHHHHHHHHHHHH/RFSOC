@@ -1,74 +1,78 @@
-# ZCU111 V20 DPD PL 说明
+# ZCU111 V20 DPD PL 设计说明
 
-## 当前实现
+## 数据通路
 
-V20 在原 V10 DBPSK 发射链路中加入了四路并行 Memory Polynomial DPD：
+当前工程在 V10 DBPSK 发射/接收链路中加入了软件闭环实验控制器和四路并行 Memory Polynomial DPD：
 
-`dual_dac_dbpsk_tx → dpd_mp_0 → RFDC s10/s11`
+```text
+DBPSK TX ─┐
+          ├─> dpd_lab_0 ─> dpd_mp_0 ─> RFDC DAC10/DAC11
+波形 RAM ─┘       ↑
+                  │ TX 参考（DPD 输入）
 
-- AXI-Stream 数据宽度：128 bit，每拍 4 个复数样点。
-- 样点时钟：184.32 MHz。
-- 样点排列：`TDATA[31:0]={Q0,I0}`，之后依次为样点 1、2、3。
-- 记忆深度：4 个 tap，即当前样点加 3 个历史样点。
-- 每个 tap 的幅度查找表：4096 项。
-- 系数格式：复数 Q1.14，32 bit 写数据为 `{gain_q[15:0], gain_i[15:0]}`。
-- 双系数 Bank：软件写非活动 Bank，再通过一次 commit 原子切换。
-- 复位后 DPD 默认关闭，采用与 DPD 等延迟的旁路，未装载系数时不会破坏原 V10 发射功能。
-- 当前同一份 DPD 输出复制到 DAC0 和 DAC1，保留 V10 的双 DAC 输出结构。
+RFDC ADC10 ─> AXIS Broadcaster ─┬─> 原 DBPSK RX
+                                └─> dpd_lab_0 采集
+RFDC ADC11 ─> AXIS Broadcaster ─┬─> 原 DBPSK RX
+                                └─> dpd_lab_0 采集
+```
 
-按当前结构估算，数据通路包含 64 个复乘实乘单元和 8 个幅度平方乘法，约使用 72 个 DSP48；双 Bank、四路复制 LUT 约占 4 Mbit 存储。最终资源量和 184.32 MHz 时序必须以有许可证的综合/实现报告为准。
+- DAC 基带流：128 bit，每拍 4 个复样点，`TDATA[31:0]={Q0,I0}`。
+- 数据时钟：184.32 MHz。
+- ADC 反馈：每拍 2 个 I 样点和 2 个 Q 样点。
+- 为匹配 ADC 采样率，采集器从四路 TX 中选择 lane 0 和 lane 2。
+- DPD：4 个记忆 tap，每个 tap 4096 点复增益 LUT，复增益为 Q1.14 `{gain_q,gain_i}`。
+- 双系数 Bank：软件完整写入非活动 Bank 后再 commit，避免在线逐项更新。
+- 复位后 DPD 默认旁路，保留原 V10 发射行为。
 
-## AXI-Lite 地址
+## 地址映射
 
-DPD 控制空间同时映射到 PS 和 JTAG AXI：
+| 模块 | PS/JTAG AXI 基地址 | 范围 |
+| --- | --- | --- |
+| MP-DPD | `0xA0080000` | 256 KiB |
+| DPD LAB | `0xA00C0000` | 256 KiB |
 
-- 基地址：`0xA0080000`
-- 范围：256 KiB，结束地址 `0xA00BFFFF`
-
-寄存器偏移：
+### MP-DPD
 
 | 偏移 | 名称 | 说明 |
 | --- | --- | --- |
-| `0x00000` | CONTROL | bit0 enable；bit1 写 1 触发 Bank commit；bit2 写 1 清零削顶计数 |
-| `0x00004` | STATUS | bit0 活动 Bank；bit1 数据时钟域中的 DPD enable |
-| `0x00008` | CLIP_COUNT | 发生输出饱和的有效数据拍数量 |
-| `0x0000C` | CORE_VERSION | 固定为 `0x44504401` |
+| `0x00000` | CONTROL | bit0 enable；bit1 写 1 commit；bit2 写 1 清 clip counter |
+| `0x00004` | STATUS | bit0 active bank；bit1 数据域 enable |
+| `0x00008` | CLIP_COUNT | 出现输出饱和的有效数据拍数 |
+| `0x0000C` | VERSION | `0x44504401` |
 
-系数写地址的局部偏移为：
+LUT 写地址：
 
 ```text
-0x20000 | (bank << 16) | (tap << 14) | (lut_address << 2)
+0x20000 | (bank << 16) | (tap << 14) | (lut_index << 2)
 ```
 
-其中 `bank=0/1`、`tap=0..3`、`lut_address=0..4095`。系数存储当前设计为只写；写入前应在软件中保存并校验系数表。
+其中 `bank=0..1`、`tap=0..3`、`lut_index=0..4095`。
 
-推荐装载顺序：
+### DPD LAB
 
-1. 保持 CONTROL.enable 为 0。
-2. 完整写入非活动 Bank 的 4×4096 个复系数。BRAM 上电内容未定义，不应只写部分地址后直接启用。
-3. 向 CONTROL 写 bit1=1，等待 STATUS.active_bank 改变。
-4. 向 CONTROL 写 bit0=1，启动 DPD。
-5. 运行时更新另一 Bank，完成后再次 commit，可避免输出流中逐项更新系数。
+| 偏移 | 名称 | 说明 |
+| --- | --- | --- |
+| `0x00000` | CONTROL | bit0 playback；bit1 写 1 触发采集；bit2 写 1 清采集状态 |
+| `0x00004` | STATUS | bit0 playback active；bit1 busy；bit2 done |
+| `0x00008` | PLAYBACK_LENGTH | 4..4096，按 4 对齐 |
+| `0x0000C` | CAPTURE_TARGET | 2..4096，按 2 对齐 |
+| `0x00010` | CAPTURE_COUNT | 已采样点数 |
+| `0x00014` | VERSION | `0x4C414202` |
+| `0x10000` | WAVEFORM RAM | 4096×32 bit `{Q,I}` |
+| `0x20000` | CAPTURE RAM | 每样点两个 32 bit word：TX 参考、ADC 反馈 |
 
-## Block Design 连接
+## 验证
 
-- `dual_dac_dbpsk_tx_0/m0_axis` → `dpd_mp_0/s_axis`，同时由 `system_ila_1/SLOT_5_AXIS` 观测。
-- `dpd_mp_0/m0_axis` → `usp_rf_data_converter_0/s10_axis`。
-- `dpd_mp_0/m1_axis` → `usp_rf_data_converter_0/s11_axis`，同时由 `system_ila_1/SLOT_4_AXIS` 观测。
-- `ps8_0_axi_periph/M02_AXI` → `dpd_mp_0/S_AXI`。
-- DPD 数据时钟/复位来自 RFDC DAC1 的 184.32 MHz 时钟域。
-- AXI-Lite 时钟/复位来自 PS `pl_clk0` 的 99.999001 MHz 时钟域。
-
-## 验证状态
-
-- `tb_dpd_mp_4lane_core.sv`：已通过旁路、恒等系数、Bank 切换、正负饱和及削顶计数测试。
-- `tb_axis_dpd_mp_4lane_dual.sv`：已通过 AXI-Lite 寄存器、系数写入复制、跨时钟状态、Bank commit、计数清零和双路旁路测试。
-- `validate_bd_design`：通过；仍有原工程已有的 PS/AXI interconnect `AWUSER_WIDTH/ARUSER_WIDTH` 警告。
-- `generate_target all`：通过，已生成包含 `dpd_mp_0` 的 BD HDL 和 IP 输出产品。
-- OOC 综合：本机缺少 `xczu28dr` Synthesis 许可证，尚不能给出资源利用率和时序结论。
+- `tb_dpd_mp_4lane_core.sv`：旁路、增益、Bank、饱和和 clip counter。
+- `tb_axis_dpd_mp_4lane_dual.sv`：AXI-Lite、双输出和跨时钟控制。
+- `tb_axis_dpd_lab_controller.sv`：波形 RAM、循环回放、采集 RAM 和寄存器。
+- `scripts/verify_dpd_pl.tcl`：BD 连接、时钟、地址和 V10 外部依赖检查。
+- `validate_bd_design` 已通过；工程原有 PS/AXI `AWUSER_WIDTH/ARUSER_WIDTH` 警告仍保留。
+- 当前机器缺少 `xczu28dr` synthesis license，因此资源量和 184.32 MHz 时序仍需在有许可环境执行完整综合/实现后确认。
 
 相关脚本：
 
-- `scripts/integrate_dpd_pl.tcl`：重复执行 PL 集成。
-- `scripts/generate_dpd_bd.tcl`：校验并生成 BD 输出产品。
-- `scripts/verify_dpd_pl.tcl`：检查 DPD 连接、时钟、地址和 V10 编译路径依赖。
+- `scripts/integrate_dpd_pl.tcl`：可重复执行 PL 集成。
+- `scripts/generate_dpd_bd.tcl`：生成 BD 输出产品和 wrapper。
+- `scripts/verify_dpd_pl.tcl`：结构化检查连接与地址。
+- `scripts/export_dpd_xsa.tcl`：导出不含 bitstream 的 V20 XSA，供 Vitis 更新 BSP。

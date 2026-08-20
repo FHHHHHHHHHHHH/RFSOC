@@ -1,0 +1,9 @@
+timestamp=[2026-08-18 09:55:53], mode=WORKBENCH_START, duration=0:00:07.167, duration_ms=7167, data={}
+timestamp=[2026-08-18 09:55:55], mode=WORKBENCH_UI_INIT, duration=0:00:01.548, duration_ms=1548, data={editors_count=0, platform_editors_count=0, projects_count=0, platform_projects_count=0, active_platform_editor=false, projects=}
+timestamp=[2026-08-18 09:56:04], mode=PLATFORM_REPOSITORY_INIT, duration=0:00:08.638, duration_ms=8638, data={}
+timestamp=[2026-08-18 09:57:32], mode=PLATFORM_CREATION, duration=0:00:34.568, duration_ms=34568, data={platform_source=dsa, os=standalone, processor=psu_cortexa53, platform=null}
+timestamp=[2026-08-18 10:00:51], mode=PLATFORM_GENERATION, duration=0:01:44.324, duration_ms=104324, data={name=ZCU111}
+timestamp=[2026-08-18 10:02:35], mode=PLATFORM_GENERATION, duration=0:00:46.758, duration_ms=46758, data={name=ZCU111}
+timestamp=[2026-08-18 10:04:41], mode=APP_CREATION, duration=0:00:02.473, duration_ms=2473, data={name=RFSOC, project_type=sdk, os=standalone, processor=cortex-a53, runtime=C/C++, platform=ZCU111, application_type=application}
+timestamp=[2026-08-18 10:06:54], mode=BUILD, duration=0:00:02.040, duration_ms=2040, data={name=RFSOC, configuration=Debug, clean_build=false}
+timestamp=[2026-08-18 16:19:40], mode=BUILD, duration=0:00:00.233, duration_ms=233, data={name=RFSOC, configuration=Debug, clean_build=false}

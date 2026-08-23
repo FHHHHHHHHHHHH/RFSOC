@@ -1,0 +1,14 @@
+#ifndef DPD_ALGORITHM_H
+#define DPD_ALGORITHM_H
+
+#include <complex.h>
+
+// 声明外部所需的常量
+#define M_DEPTH 2
+#define K_ORDER 3
+#define NUM_COEFFS (M_DEPTH * K_ORDER)
+
+// 声明提取系数的函数
+void extract_dpd_coefficients(double complex *w);
+
+#endif // DPD_ALGORITHM_H

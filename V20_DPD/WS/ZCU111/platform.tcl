@@ -26,3 +26,5 @@ bsp reload
 catch {bsp regenerate}
 bsp write
 platform generate
+platform active {ZCU111}
+platform generate -domains 

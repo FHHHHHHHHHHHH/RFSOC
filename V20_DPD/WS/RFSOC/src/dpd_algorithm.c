@@ -1,0 +1,112 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <complex.h>
+#include <math.h>
+#include "pa_sim_data.h"
+#include "dpd_algorithm.h"
+
+#define M_DEPTH 2       // 记忆深度 (m=0, 1)
+#define K_ORDER 3       // 使用非线性阶数数量 (1阶, 3阶, 5阶)
+#define NUM_COEFFS (M_DEPTH * K_ORDER) // 总系数个数 (6)
+
+// 提取基向量 U 的函数
+void get_basis_vector(double complex *U, double complex *y, int n) {
+    int idx = 0;
+    for (int m = 0; m < M_DEPTH; m++) {
+        if (n - m < 0) continue; // 边界保护
+
+        double complex y_val = y[n - m];
+        double abs_y2 = pow(cabs(y_val), 2);
+
+        U[idx++] = y_val;                       // 1阶
+        U[idx++] = y_val * abs_y2;              // 3阶
+        U[idx++] = y_val * abs_y2 * abs_y2;     // 5阶
+    }
+}
+
+// 高斯消元法解复数线性方程组 Aw = b
+void solve_linear_system(double complex A[NUM_COEFFS][NUM_COEFFS],
+                         double complex b[NUM_COEFFS],
+                         double complex w[NUM_COEFFS]) {
+    // 简化的按列主元高斯消元法
+    for (int i = 0; i < NUM_COEFFS; i++) {
+        // 寻找主元
+        int max_row = i;
+        for (int k = i + 1; k < NUM_COEFFS; k++) {
+            if (cabs(A[k][i]) > cabs(A[max_row][i])) {
+                max_row = k;
+            }
+        }
+
+        // 交换行
+        for (int k = i; k < NUM_COEFFS; k++) {
+            double complex tmp = A[i][k];
+            A[i][k] = A[max_row][k];
+            A[max_row][k] = tmp;
+        }
+        double complex tmp_b = b[i];
+        b[i] = b[max_row];
+        b[max_row] = tmp_b;
+
+        // 消元
+        for (int k = i + 1; k < NUM_COEFFS; k++) {
+            double complex factor = A[k][i] / A[i][i];
+            for (int j = i; j < NUM_COEFFS; j++) {
+                A[k][j] -= factor * A[i][j];
+            }
+            b[k] -= factor * b[i];
+        }
+    }
+
+    // 回代
+    for (int i = NUM_COEFFS - 1; i >= 0; i--) {
+        w[i] = b[i];
+        for (int j = i + 1; j < NUM_COEFFS; j++) {
+            w[i] -= A[i][j] * w[j];
+        }
+        w[i] /= A[i][i];
+    }
+}
+
+void extract_dpd_coefficients(double complex *w) {
+    double complex A[NUM_COEFFS][NUM_COEFFS] = {0};
+    double complex b[NUM_COEFFS] = {0};
+
+    // 动态分配转换后的浮点数据内存，避免栈溢出
+    double complex *x = malloc(DPD_SAMPLE_SIZE * sizeof(double complex));
+    double complex *y = malloc(DPD_SAMPLE_SIZE * sizeof(double complex));
+
+    // 1. 数据对齐与浮点化 (硬件读取的 ADC 反馈通常需要做增益/相位对齐，这里简化)
+    for (int i = 0; i < DPD_SAMPLE_SIZE; i++) {
+        // 归一化处理，防止高阶计算溢出
+        x[i] = (tx_ref_i[i] + tx_ref_q[i] * I) / 32768.0;
+        y[i] = (rx_distorted_i[i] + rx_distorted_q[i] * I) / 32768.0;
+    }
+
+    // 2. 累加构建协方差矩阵 A 和向量 b
+    double complex U[NUM_COEFFS];
+    for (int n = M_DEPTH - 1; n < DPD_SAMPLE_SIZE; n++) {
+        get_basis_vector(U, y, n);
+
+        for (int row = 0; row < NUM_COEFFS; row++) {
+            for (int col = 0; col < NUM_COEFFS; col++) {
+                // A = Y^H * Y (注意共轭)
+                A[row][col] += conj(U[row]) * U[col];
+            }
+            // b = Y^H * x
+            b[row] += conj(U[row]) * x[n];
+        }
+    }
+
+    // 3. 求解矩阵
+    solve_linear_system(A, b, w);
+
+    // 4. 打印或下发系数
+    printf("--- DPD Coefficients Extracted ---\n");
+    for (int i = 0; i < NUM_COEFFS; i++) {
+        printf("Coeff[%d] = %f + %fj\n", i, creal(w[i]), cimag(w[i]));
+    }
+
+    free(x);
+    free(y);
+}

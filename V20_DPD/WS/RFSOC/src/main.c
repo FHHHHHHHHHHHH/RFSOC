@@ -14,6 +14,8 @@
 #include "xrfdc_clk.h"
 #include "app_config.h"
 #include "dpd_runtime.h"
+#include "dpd_algorithm.h"
+#include "pa_sim_data.h"
 
 #define PREAMBLE_BYTES       4U
 #define SYNC_BYTES           4U

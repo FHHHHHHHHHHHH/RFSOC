@@ -1,12 +1,14 @@
 #include <stdlib.h>
 #include <string.h>
-
+#include <stdio.h>
 #include "xil_io.h"
 #include "xil_printf.h"
 #include "sleep.h"
 #include "xstatus.h"
 #include "app_config.h"
 #include "dpd_runtime.h"
+#include "dpd_algorithm.h"
+#include "pa_sim_data.h" // 您之前生成的硬编码测试数据
 
 #define DPD_CONTROL_OFFSET       0x00000U
 #define DPD_STATUS_OFFSET        0x00004U
@@ -28,6 +30,14 @@
 #define DPD_LUT_DEPTH            4096U
 #define DPD_TAPS                 4U
 
+
+// 定义您的 LAB 模块在 Vivado 实际分配的基地址
+#define LAB_BASE_ADDR      0xA0000000  // 请替换为您实际的 AXI 地址
+#define TX_BRAM_OFFSET     0x0000
+#define RX_BRAM_OFFSET     0x4000
+
+
+
 static u32 ReadRegister(UINTPTR base, u32 offset)
 {
     return Xil_In32(base + (UINTPTR)offset);
@@ -37,6 +47,25 @@ static void WriteRegister(UINTPTR base, u32 offset, u32 value)
 {
     Xil_Out32(base + (UINTPTR)offset, value);
 }
+
+// 新增：加载发送波形到 LAB BRAM 的函数
+static void LoadSimulatedTxWaveform(void)
+{
+    u32 i;
+    xil_printf("[SIM] Loading simulated TX waveform (%d samples)...\r\n", DPD_SAMPLE_SIZE);
+
+    for (i = 0; i < DPD_SAMPLE_SIZE; i++) {
+        // 根据 SV 源码要求：高 16 位为 Q，低 16 位为 I
+        u32 tx_word = ((u32)(u16)tx_ref_q[i] << 16) | (u16)tx_ref_i[i];
+
+        // 使用原文件中提供的 WriteRegister 函数和宏
+        WriteRegister((UINTPTR)DPD_LAB_BASE_ADDRESS,
+                      LAB_WAVEFORM_OFFSET + (i << 2), tx_word);
+    }
+
+    xil_printf("[SIM] TX waveform loaded successfully into BRAM.\r\n");
+}
+
 
 static void SkipSpaces(const char **cursor)
 {
@@ -68,6 +97,7 @@ static u32 LabControl(void)
 {
     return ReadRegister((UINTPTR)DPD_LAB_BASE_ADDRESS, LAB_CONTROL_OFFSET) & 1U;
 }
+
 
 static void PrintDpdStatus(void)
 {
@@ -112,6 +142,8 @@ void DpdPrintHelp(void)
     xil_printf("  LABW <start> <hex...>           load packed IQ waveform\r\n");
     xil_printf("  LABC <even_count> trigger a 2..4096 sample capture\r\n");
     xil_printf("  LABR <start> <count> print LABD index tx_hex feedback_hex\r\n");
+    xil_printf("  SIML              load simulated TX waveform into LAB (No PA Mode)\r\n");
+    xil_printf("  CALIB             extract DPD coefficients from simulated data\r\n");
 }
 
 int DpdProcessCommand(const char *command, const char *argument)
@@ -231,6 +263,64 @@ int DpdProcessCommand(const char *command, const char *argument)
                 xil_printf("LABE %u\r\n", second);
             }
         }
+    }else if (strcmp(command, "SIML") == 0) {
+        LoadSimulatedTxWaveform();
+        // 自动将 LAB 切换到波形回放模式，相当于执行了 "LABP 1" 和 "LABL 4096"
+        WriteRegister((UINTPTR)DPD_LAB_BASE_ADDRESS, LAB_PLAY_LENGTH_OFFSET, DPD_SAMPLE_SIZE);
+        WriteRegister((UINTPTR)DPD_LAB_BASE_ADDRESS, LAB_CONTROL_OFFSET, 1U);
+        xil_printf("[OK] LAB configured for simulated waveform playback.\r\n");
+
+    } else if (strcmp(command, "CALIB") == 0) {
+            xil_printf("[CALIB] Starting LS algorithm for DPD coefficients...\r\n");
+            double complex w_coeffs[NUM_COEFFS];
+            // 调用算法提取系数
+            extract_dpd_coefficients(w_coeffs);
+
+            // 2. 准备写入硬件的后台 Bank (乒乓操作)
+			u32 inactive_bank = (ReadRegister((UINTPTR)DPD_BASE_ADDRESS, DPD_STATUS_OFFSET) & 1U) ^ 1U;
+			xil_printf("[CALIB] Expanding coefficients to LUTs (Bank %u)...\r\n", inactive_bank);
+
+			// 3. 展开映射并下发到硬件 (双层循环: Taps 和 LUT深度)
+			// 硬件支持 4 个 Tap，但我们 M_DEPTH = 2，所以 Tap 2 和 Tap 3 填零
+			for (u32 tap = 0; tap < DPD_TAPS; tap++) {
+				for (u32 index = 0; index < DPD_LUT_DEPTH; index++) {
+					double complex G = 0 + 0 * I;
+
+					if (tap < M_DEPTH) {
+						// a) 将硬件查表索引还原为归一化功率 r^2
+						double r2 = (double)index / 2048.0;
+
+						// b) 计算该档位下的复数增益 G = w0 + w1*(r^2) + w2*(r^4)
+						int w_idx = tap * K_ORDER;
+						G = w_coeffs[w_idx] + w_coeffs[w_idx + 1] * r2 + w_coeffs[w_idx + 2] * r2 * r2;
+					}
+
+					// c) 定点量化：硬件参数 FRAC_BITS = 14
+					double scale = 16384.0;
+					int gain_i = (int)round(creal(G) * scale);
+					int gain_q = (int)round(cimag(G) * scale);
+
+					// d) 饱和截断防溢出 (16-bit signed limit)
+					if (gain_i > 32767) gain_i = 32767;
+					if (gain_i < -32768) gain_i = -32768;
+					if (gain_q > 32767) gain_q = 32767;
+					if (gain_q < -32768) gain_q = -32768;
+
+					// e) 拼接为 32-bit 寄存器格式: {gain_q[15:0], gain_i[15:0]}
+					u32 lut_word = ((u32)(u16)gain_q << 16) | (u16)gain_i;
+
+					// f) 写入 AXI-Lite 映射地址
+					// 偏移地址组合: | bank(bit16) | tap(bit15:14) | index(bit13:2) |
+					u32 offset = DPD_LUT_WINDOW_OFFSET | (inactive_bank << 16) | (tap << 14) | (index << 2);
+					WriteRegister((UINTPTR)DPD_BASE_ADDRESS, offset, lut_word);
+				}
+			}
+			xil_printf("[CALIB] LUT programming complete. Committing hardware bank...\r\n");
+
+			// 4. 触发硬件 Bank 切换，使新校准数据生效 (等同于 DPDC 命令)
+			WriteRegister((UINTPTR)DPD_BASE_ADDRESS, DPD_CONTROL_OFFSET, DpdControl() | 2U);
+			xil_printf("[CALIB] Calibration fully applied. HW DPD is now armed!\r\n");
+
     } else {
         return 0;
     }

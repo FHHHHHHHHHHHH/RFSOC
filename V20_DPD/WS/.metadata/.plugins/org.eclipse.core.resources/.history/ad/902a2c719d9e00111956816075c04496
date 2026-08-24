@@ -82,8 +82,8 @@ void extract_dpd_coefficients(double complex *w) {
     // 1. 数据对齐与浮点化 (硬件读取的 ADC 反馈通常需要做增益/相位对齐，这里简化)
     for (int i = 0; i < DPD_SAMPLE_SIZE; i++) {
         // 归一化处理，防止高阶计算溢出
-    	x_data[i] = (tx_ref_i[i] + tx_ref_q[i] * I) / 32768.0;
-        y_data[i] = (rx_distorted_i[i] + rx_distorted_q[i] * I) / 32768.0;
+        x[i] = (tx_ref_i[i] + tx_ref_q[i] * I) / 32768.0;
+        y[i] = (rx_distorted_i[i] + rx_distorted_q[i] * I) / 32768.0;
     }
 
     // 2. 累加构建协方差矩阵 A 和向量 b

@@ -32,7 +32,7 @@
 
 
 // 定义您的 LAB 模块在 Vivado 实际分配的基地址
-//#define LAB_BASE_ADDR      0xA0000000  // 请替换为您实际的 AXI 地址
+#define LAB_BASE_ADDR      0xA0000000  // 请替换为您实际的 AXI 地址
 #define TX_BRAM_OFFSET     0x0000
 #define RX_BRAM_OFFSET     0x4000
 

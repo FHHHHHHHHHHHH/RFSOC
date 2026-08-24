@@ -77,19 +77,21 @@ void extract_dpd_coefficients(double complex *w) {
     double complex A[NUM_COEFFS][NUM_COEFFS] = {0};
     double complex b[NUM_COEFFS] = {0};
 
-
+    // 动态分配转换后的浮点数据内存，避免栈溢出
+    double complex *x = malloc(DPD_SAMPLE_SIZE * sizeof(double complex));
+    double complex *y = malloc(DPD_SAMPLE_SIZE * sizeof(double complex));
 
     // 1. 数据对齐与浮点化 (硬件读取的 ADC 反馈通常需要做增益/相位对齐，这里简化)
     for (int i = 0; i < DPD_SAMPLE_SIZE; i++) {
         // 归一化处理，防止高阶计算溢出
-    	x_data[i] = (tx_ref_i[i] + tx_ref_q[i] * I) / 32768.0;
-        y_data[i] = (rx_distorted_i[i] + rx_distorted_q[i] * I) / 32768.0;
+        x[i] = (tx_ref_i[i] + tx_ref_q[i] * I) / 32768.0;
+        y[i] = (rx_distorted_i[i] + rx_distorted_q[i] * I) / 32768.0;
     }
 
     // 2. 累加构建协方差矩阵 A 和向量 b
     double complex U[NUM_COEFFS];
     for (int n = M_DEPTH - 1; n < DPD_SAMPLE_SIZE; n++) {
-        get_basis_vector(U, y_data, n);
+        get_basis_vector(U, y, n);
 
         for (int row = 0; row < NUM_COEFFS; row++) {
             for (int col = 0; col < NUM_COEFFS; col++) {
@@ -97,7 +99,7 @@ void extract_dpd_coefficients(double complex *w) {
                 A[row][col] += conj(U[row]) * U[col];
             }
             // b = Y^H * x
-            b[row] += conj(U[row]) * x_data[n];
+            b[row] += conj(U[row]) * x[n];
         }
     }
 
@@ -110,4 +112,6 @@ void extract_dpd_coefficients(double complex *w) {
         printf("Coeff[%d] = %f + %fj\n", i, creal(w[i]), cimag(w[i]));
     }
 
+    free(x);
+    free(y);
 }

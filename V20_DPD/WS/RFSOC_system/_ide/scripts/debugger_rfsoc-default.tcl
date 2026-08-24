@@ -26,9 +26,9 @@ set mode [expr [mrd -value 0xFF5E0200] & 0xf]
 targets -set -nocase -filter {name =~ "*A53*#0"}
 rst -processor
 dow E:/Vivado_prj/ZCU111_V20_DPD/V20_DPD/WS/ZCU111/export/ZCU111/sw/ZCU111/boot/fsbl.elf
-set bp_31_58_fsbl_bp [bpadd -addr &XFsbl_Exit]
+set bp_51_50_fsbl_bp [bpadd -addr &XFsbl_Exit]
 con -block -timeout 60
-bpremove $bp_31_58_fsbl_bp
+bpremove $bp_51_50_fsbl_bp
 targets -set -nocase -filter {name =~ "*A53*#0"}
 rst -processor
 dow E:/Vivado_prj/ZCU111_V20_DPD/V20_DPD/WS/RFSOC/Debug/RFSOC.elf

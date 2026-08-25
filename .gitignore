@@ -44,6 +44,11 @@ vivado_pid*.str
 !sw/design_1_wrapper.xsa
 !V11_LFM_RANGE/sw/design_1_wrapper.xsa
 
+# Release artifacts intentionally tracked for V11 LFM handoff
+!V11_LFM_RANGE/artifacts/
+!V11_LFM_RANGE/artifacts/*.bit
+!V11_LFM_RANGE/artifacts/*.xsa
+
 # Local Vitis/generated build workspaces
 sw/ws/
 sw/build/

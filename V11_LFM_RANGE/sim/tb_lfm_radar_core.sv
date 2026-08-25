@@ -6,6 +6,7 @@ module tb_lfm_radar_core;
     localparam integer MAX_LAG         = 16;
     localparam integer REF_DELAY       = 4;
     localparam integer TARGET_LAG      = 7;
+    localparam integer TARGET_LAG_2    = 11;
 
     reg clk = 1'b0;
     always #2.712 clk = ~clk;
@@ -77,6 +78,7 @@ module tb_lfm_radar_core;
     integer lane;
     integer index_ref;
     integer index_target;
+    integer index_target_2;
     integer signed ref_i_value;
     integer signed ref_q_value;
     integer signed target_i_value;
@@ -114,6 +116,7 @@ module tb_lfm_radar_core;
 
             index_ref = (sample_counter + lane - REF_DELAY) & 511;
             index_target = (sample_counter + lane - REF_DELAY - TARGET_LAG) & 511;
+            index_target_2 = (sample_counter + lane - REF_DELAY - TARGET_LAG_2) & 511;
             ref_i_value = hist_i[index_ref];
             ref_q_value = hist_q[index_ref];
             target_i_value = hist_i[index_target];
@@ -123,6 +126,8 @@ module tb_lfm_radar_core;
             if (target_enable) begin
                 echo_i_value = echo_i_value + (target_i_value >>> 1);
                 echo_q_value = echo_q_value + (target_q_value >>> 1);
+                echo_i_value = echo_i_value + (hist_i[index_target_2] >>> 1);
+                echo_q_value = echo_q_value + (hist_q[index_target_2] >>> 1);
             end
 
             ref_i[lane*16 +: 16] <= clip16(ref_i_value);
@@ -147,14 +152,18 @@ module tb_lfm_radar_core;
     integer packet_word = 0;
     integer packet_count = 0;
     reg [15:0] observed_lag = 16'hffff;
+    reg [15:0] observed_lag_2 = 16'hffff;
+    reg [7:0] observed_count = 0;
     reg [31:0] observed_flags = 32'd0;
 
     always @(posedge clk) begin
         if (result_valid && result_ready) begin
             case (packet_word)
                 0: if (result_data !== 32'h524e4731) $fatal(1, "bad result magic");
-                1: observed_lag <= result_data[15:0];
-                5: observed_flags <= result_data;
+                1: observed_count <= result_data[23:16];
+                3: observed_lag <= result_data[15:0];
+                5: observed_lag_2 <= result_data[15:0];
+                2: observed_flags <= result_data;
             endcase
             if (result_last) begin
                 packet_word <= 0;
@@ -192,10 +201,16 @@ module tb_lfm_radar_core;
             timeout = timeout + 1;
         end
         if (packet_count < 2) $fatal(1, "target measurement timed out");
-        if (observed_lag < TARGET_LAG-1 || observed_lag > TARGET_LAG+1)
+        if (observed_count < 1 || observed_lag < TARGET_LAG-1 ||
+            observed_lag > TARGET_LAG+1)
             $fatal(1, "expected target lag near %0d, got %0d", TARGET_LAG, observed_lag);
+        if (observed_count < 2 || observed_lag_2 < TARGET_LAG_2-1 ||
+            observed_lag_2 > TARGET_LAG_2+1)
+            $fatal(1, "expected second target lag near %0d, got %0d (count %0d)",
+                   TARGET_LAG_2, observed_lag_2, observed_count);
 
-        $display("PASS: calibrated background and detected target lag %0d", observed_lag);
+        $display("PASS: calibrated background and detected target lags %0d and %0d",
+                 observed_lag, observed_lag_2);
         $finish;
     end
 

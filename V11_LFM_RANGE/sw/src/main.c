@@ -251,25 +251,34 @@ static double PeakFraction(u32 left, u32 peak, u32 right)
 
 static void HandleRangePacket(const u32 *words)
 {
-    u32 sequence = words[1] >> 16;
-    u32 lag = words[1] & 0xFFFFU;
-    u32 peak = words[2];
-    u32 left = words[3];
-    u32 right = words[4];
-    u32 flags = words[5];
+    u32 version = words[1] >> 24;
+    u32 targetCount = (words[1] >> 16) & 0xFFU;
+    u32 sequence = words[1] & 0xFFFFU;
+    u32 flags = words[2];
+    u32 lag = (targetCount != 0U) ? words[3] & 0xFFFFU : 0U;
+    u32 peak = (targetCount != 0U) ? words[4] : 0U;
+    u32 left = words[11];
+    u32 right = words[12];
     double lagSamples;
     double distanceMm;
     int distanceIntegerMm;
 
+    if (version != RADAR_RESULT_VERSION) {
+        ++DroppedPackets;
+        return;
+    }
     if ((flags & 0x2U) != 0U) {
         xil_printf("\r\n[BGCAL] leakage/background calibration complete; seq=%u\r\n> ",
                    sequence);
         return;
     }
     ++ResultCount;
-    if (peak < PeakThreshold)
+    if (targetCount > RADAR_RESULT_TARGETS)
+        targetCount = RADAR_RESULT_TARGETS;
+    if (targetCount == 0U || peak < PeakThreshold)
         return;
 
+    /* RCAL continues to use the first target and its neighbour scores. */
     lagSamples = (double)lag + PeakFraction(left, peak, right);
     distanceMm = lagSamples * RANGE_MM_PER_SAMPLE + RangeOffsetMm;
 
@@ -290,6 +299,18 @@ static void HandleRangePacket(const u32 *words)
     xil_printf("\r\n[RANGE] %d.%03d m  (%d mm) peak=%u lag=%u seq=%u\r\n> ",
                distanceIntegerMm / 1000, distanceIntegerMm % 1000,
                distanceIntegerMm, peak, lag, sequence);
+    for (u32 target = 1U; target < targetCount; ++target) {
+        u32 targetLag = words[3U + 2U * target] & 0xFFFFU;
+        u32 targetPeak = words[4U + 2U * target];
+        double targetDistance = (double)targetLag * RANGE_MM_PER_SAMPLE +
+                                RangeOffsetMm;
+        if (targetPeak >= PeakThreshold && targetDistance >= 0.0) {
+            int targetMm = (int)(targetDistance + 0.5);
+            xil_printf("[RANGE] target%u %d.%03d m (%d mm) peak=%u lag=%u\r\n",
+                       target, targetMm / 1000, targetMm % 1000, targetMm,
+                       targetPeak, targetLag);
+        }
+    }
 }
 
 static void PollRangeFifo(void)

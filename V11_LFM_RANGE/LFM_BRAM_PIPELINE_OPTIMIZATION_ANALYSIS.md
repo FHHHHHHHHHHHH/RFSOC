@@ -1049,3 +1049,29 @@ reference 波形固定，其频谱可以预先计算。FFT 方案复杂度从 `O
 | 完整 routed 时序 | `V11_LFM_RANGE.runs/impl_1/design_1_wrapper_timing_summary_routed.rpt` |
 | 工程背景 | `V11_LFM_RANGE_CONTEXT.md` |
 
+## 9. II=1 单 lane 原型（2026-08）
+
+`rtl/lfm_radar_core.v` 现已把相关器的 `READ/MULT/ACCUM` 三态互斥推进改为
+单 lane valid/address 流水原型。`sample_index` 每拍发出一个连续样点地址，
+同步 BRAM 读和复乘结果分别用 `corr_read_valid`、`corr_product_valid` 对齐，
+流水填充后每拍退休一个复乘结果（启动间隔 II=1）。外部 AXI、背景扣除、
+幅度和最大峰输出接口保持不变；`DIFF/MAG/UPDATE` 仍在每个 lag 完成后运行。
+
+该改动只验证单 lane 吞吐，未引入 4-lane BRAM bank 或多个 lag engine，因此
+不能达到 10 kHz 逐脉冲实时。`PROC_CORR_MULT` 和 `PROC_CORR_ACCUM` 状态编码
+暂保留以减少接口/调试扰动，但不再被主流程访问。Vivado `xvlog` 已通过 RTL
+和 testbench 的语法分析；完整 `run_rtl_sim.tcl` 在当前环境因 Vivado
+`librdi_coretasks` 加载时 `bad allocation` 而未能执行。
+
+## 10. 一维 CA-CFAR 与多目标原型（2026-08）
+
+在 II=1 单 lane 相关完成之后，RTL 将 128 个原始 49 bit 幅度写入
+`lag_scores`。检测阶段先串行生成 64 bit 前缀和，再以每拍一个 lag 的速率计算
+左右训练窗总和。当前参数为每侧 2 个训练单元、1 个保护单元、噪声均值 2 倍
+门限，并附加 Q16 缩放后的 1000 分绝对底限。候选还必须满足局部最大值条件；
+接受目标后对保护范围做非极大值抑制，按距离顺序最多保存 4 个 lag/score。
+
+结果接口由旧 6 word 包升级到版本化 14 word 固定包。软件拒绝未知版本，第一
+目标继续支持 RCAL 和左右邻点抛物线插值，其余目标使用整数 lag 输出。CFAR
+参数当前为 RTL 常量，尚未实现运行期命令配置；目标按 lag 顺序而不是按幅度
+排序；串行除法器的综合资源/时序尚需 Vivado 综合验证。

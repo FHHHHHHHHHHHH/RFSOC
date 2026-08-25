@@ -19,7 +19,10 @@
 #define RADAR_CMD_START      0x524E4701U
 #define RADAR_CMD_BGCAL      0x42474341U
 #define RADAR_RESULT_MAGIC   0x524E4731U
-#define RADAR_RESULT_WORDS   6U
+#define RADAR_RESULT_VERSION 1U
+#define RADAR_RESULT_TARGETS 4U
+/* magic, version/count/sequence, flags, 4x(lag/score), left, right, flags */
+#define RADAR_RESULT_WORDS   14U
 
 #define ADC_COMPLEX_FS_HZ    737280000.0
 #define RANGE_MM_PER_SAMPLE  203.3094618

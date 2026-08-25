@@ -98,6 +98,17 @@ module lfm_radar_core #(
     localparam [3:0] PROC_CORR_UPDATE = 4'd7;
     localparam [3:0] PROC_FINALIZE    = 4'd8;
     localparam [3:0] PROC_OUTPUT      = 4'd9;
+    localparam [3:0] PROC_CFAR_PREFIX = 4'd10;
+    localparam [3:0] PROC_CFAR_SCAN   = 4'd11;
+
+    // One-dimensional CA-CFAR parameters.  Scores are retained at their
+    // native 49-bit precision; the absolute floor is expressed in the same
+    // Q16-scaled units used by the legacy software threshold.
+    localparam integer CFAR_TRAIN_CELLS = 2;
+    localparam integer CFAR_GUARD_CELLS = 1;
+    localparam integer CFAR_SCALE       = 2;
+    localparam integer MAX_TARGETS      = 4;
+    localparam [48:0] CFAR_ABS_THRESHOLD = (1000 << 16);
 
     // Synchronous block ROM.  The build scripts make ROM_FILE visible to the
     // synthesis working directory; simulation overrides it with a local path.
@@ -128,6 +139,12 @@ module lfm_radar_core #(
     reg [15:0]         sample_index;
     reg [1:0]          ref_lane_index;
     reg [1:0]          echo_lane_index;
+    // Single-lane II=1 correlation pipeline bookkeeping.  sample_index is
+    // the address issue counter; the two valid bits account for the
+    // synchronous BRAM read and registered multiplier stages.
+    reg                corr_read_valid;
+    reg                corr_product_valid;
+    reg [15:0]         corr_accum_count;
     reg signed [47:0]  corr_acc_re;
     reg signed [47:0]  corr_acc_im;
     reg signed [31:0]  mult_ei_ri_pipe;
@@ -150,7 +167,28 @@ module lfm_radar_core #(
     reg [48:0]         final_left_score;
     reg [48:0]         final_right_score;
     reg [15:0]         result_sequence;
-    reg [2:0]          output_word_index;
+    reg [3:0]          output_word_index;
+
+    // Full range profile and CA-CFAR working storage.  Prefix sums keep the
+    // per-cell CFAR operation bounded to a few adds/subtracts rather than a
+    // variable-size training-window loop.
+    reg [48:0]         lag_scores [0:MAX_LAG-1];
+    reg [63:0]         cfar_prefix [0:MAX_LAG];
+    reg [15:0]         cfar_prefix_index;
+    reg [63:0]         cfar_running_sum;
+    reg [15:0]         cfar_index;
+    reg [2:0]          target_count;
+    reg [15:0]         target_lag [0:MAX_TARGETS-1];
+    reg [48:0]         target_score [0:MAX_TARGETS-1];
+    reg [15:0]         cfar_suppress_until;
+
+    reg [15:0] cfar_left_start, cfar_left_end;
+    reg [15:0] cfar_right_start, cfar_right_end;
+    reg [63:0] cfar_train_sum;
+    reg [7:0]  cfar_train_count;
+    reg [63:0] cfar_threshold;
+    reg        cfar_candidate;
+    integer cfar_tmp_count;
 
     wire adc_valid = echo_i_axis_tvalid && echo_q_axis_tvalid &&
                      ref_i_axis_tvalid  && ref_q_axis_tvalid;
@@ -225,6 +263,62 @@ module lfm_radar_core #(
     wire background_write_enable =
         (proc_state == PROC_CORR_DIFF) && scan_calibrate;
 
+    // CA-CFAR window arithmetic.  The edge cells naturally have fewer
+    // training cells; the measured count is used for the average.
+    always @* begin
+        cfar_left_start  = 16'd0;
+        cfar_left_end    = 16'd0;
+        cfar_right_start = 16'd0;
+        cfar_right_end   = 16'd0;
+        cfar_train_sum   = 64'd0;
+        cfar_tmp_count   = 0;
+        cfar_train_count = 8'd0;
+        cfar_threshold   = 64'hffffffffffffffff;
+        cfar_candidate   = 1'b0;
+
+        // Do not index unpacked arrays until the registered scan index is
+        // known to be in range.  Besides being safer RTL, this avoids a
+        // Vivado 2020.2 xsim failure when an X-valued time-zero index is used.
+        if ((proc_state == PROC_CFAR_SCAN) && (cfar_index < MAX_LAG)) begin
+            cfar_left_start  = (cfar_index > (CFAR_GUARD_CELLS + CFAR_TRAIN_CELLS)) ?
+                                cfar_index - CFAR_GUARD_CELLS - CFAR_TRAIN_CELLS : 0;
+            cfar_left_end    = (cfar_index > CFAR_GUARD_CELLS) ?
+                                cfar_index - CFAR_GUARD_CELLS : 0;
+            cfar_right_start = cfar_index + CFAR_GUARD_CELLS + 1;
+            cfar_right_end   = cfar_index + CFAR_GUARD_CELLS + CFAR_TRAIN_CELLS + 1;
+            if (cfar_right_start > MAX_LAG)
+                cfar_right_start = MAX_LAG;
+            if (cfar_right_end > MAX_LAG)
+                cfar_right_end = MAX_LAG;
+            cfar_train_sum =
+                (cfar_prefix[cfar_left_end] - cfar_prefix[cfar_left_start]) +
+                (cfar_prefix[cfar_right_end] - cfar_prefix[cfar_right_start]);
+            cfar_tmp_count = (cfar_left_end - cfar_left_start) +
+                             (cfar_right_end - cfar_right_start);
+            cfar_train_count = cfar_tmp_count;
+
+            // With two training cells on each side, the normal interior case
+            // has four training cells.  Avoid a general-purpose divider.
+            case (cfar_train_count)
+                8'd1: cfar_threshold = cfar_train_sum * 2;
+                8'd2: cfar_threshold = cfar_train_sum;
+                8'd3: cfar_threshold = (cfar_train_sum * 2) / 3;
+                8'd4: cfar_threshold = cfar_train_sum >> 1;
+                default: cfar_threshold = 64'hffffffffffffffff;
+            endcase
+
+            cfar_candidate = (cfar_tmp_count != 0) &&
+                ({15'd0, lag_scores[cfar_index]} >= CFAR_ABS_THRESHOLD) &&
+                ({15'd0, lag_scores[cfar_index]} >= cfar_threshold);
+            if (cfar_index != 0)
+                cfar_candidate = cfar_candidate &&
+                    (lag_scores[cfar_index] > lag_scores[cfar_index-1]);
+            if (cfar_index != MAX_LAG-1)
+                cfar_candidate = cfar_candidate &&
+                    (lag_scores[cfar_index] >= lag_scores[cfar_index+1]);
+        end
+    end
+
     // The ROM output is prepared one beat ahead so the AXI output presents
     // each waveform word exactly once despite the synchronous ROM latency.
     always @(posedge clk) begin
@@ -276,6 +370,9 @@ module lfm_radar_core #(
             sample_index         <= 16'd0;
             ref_lane_index       <= 2'd0;
             echo_lane_index      <= 2'd0;
+            corr_read_valid      <= 1'b0;
+            corr_product_valid   <= 1'b0;
+            corr_accum_count     <= 16'd0;
             corr_acc_re          <= 48'sd0;
             corr_acc_im          <= 48'sd0;
             mult_ei_ri_pipe      <= 32'sd0;
@@ -299,6 +396,11 @@ module lfm_radar_core #(
             final_right_score    <= 49'd0;
             result_sequence      <= 16'd0;
             output_word_index    <= 3'd0;
+            cfar_prefix_index    <= 16'd0;
+            cfar_running_sum     <= 64'd0;
+            cfar_index           <= 16'd0;
+            target_count         <= 3'd0;
+            cfar_suppress_until  <= 16'd0;
             m_axis_result_tdata  <= 32'd0;
             m_axis_result_tvalid <= 1'b0;
             m_axis_result_tlast  <= 1'b0;
@@ -350,6 +452,9 @@ module lfm_radar_core #(
                     sample_index       <= 16'd0;
                     corr_acc_re        <= 48'sd0;
                     corr_acc_im        <= 48'sd0;
+                    corr_read_valid    <= 1'b0;
+                    corr_product_valid <= 1'b0;
+                    corr_accum_count   <= 16'd0;
                     max_score          <= 49'd0;
                     max_lag_index      <= 16'd0;
                     max_left_score     <= 49'd0;
@@ -362,40 +467,51 @@ module lfm_radar_core #(
                 end
             end
 
-            // READ: issue synchronous BRAM reads and retain the lane selectors
-            // until the registered memory outputs are consumed by MULT.
+            // Single-lane II=1 correlation pipeline.  A new sample address is
+            // issued on every clock while the current lag is being processed.
+            // BRAM read data, complex products and the accumulator are each
+            // registered, so the first result appears after the two-cycle
+            // pipeline fill and one result is retired on every subsequent
+            // clock.  The final two clocks drain the BRAM/product stages.
             if (proc_state == PROC_CORR_READ) begin
-                ref_lane_index  <= sample_index[1:0];
-                echo_lane_index <= echo_sample_address[1:0];
-                proc_state      <= PROC_CORR_MULT;
-            end
-
-            // MULT: isolate the BRAM/lane muxes from the complex adders and
-            // accumulator.  Each multiplier result is registered separately.
-            if (proc_state == PROC_CORR_MULT) begin
-                mult_ei_ri_pipe <= mult_ei_ri;
-                mult_eq_rq_pipe <= mult_eq_rq;
-                mult_eq_ri_pipe <= mult_eq_ri;
-                mult_ei_rq_pipe <= mult_ei_rq;
-                proc_state      <= PROC_CORR_ACCUM;
-            end
-
-            // ACCUM: form the complex product and add it to the running sum.
-            // The completed correlation is registered before background
-            // subtraction, magnitude generation or peak comparison.
-            if (proc_state == PROC_CORR_ACCUM) begin
-                if (sample_index == CORR_SAMPLES - 1) begin
-                    corr_sum_re_pipe <= corr_acc_next_re;
-                    corr_sum_im_pipe <= corr_acc_next_im;
-                    corr_acc_re  <= 48'sd0;
-                    corr_acc_im  <= 48'sd0;
-                    sample_index <= 16'd0;
-                    proc_state   <= PROC_CORR_DIFF;
+                // Issue the next reference/echo address and retain its lane
+                // selectors for the synchronous BRAM output one cycle later.
+                if (sample_index < CORR_SAMPLES) begin
+                    ref_lane_index  <= sample_index[1:0];
+                    echo_lane_index <= echo_sample_address[1:0];
+                    sample_index    <= sample_index + 1'b1;
+                    corr_read_valid <= 1'b1;
                 end else begin
-                    corr_acc_re  <= corr_acc_next_re;
-                    corr_acc_im  <= corr_acc_next_im;
-                    sample_index <= sample_index + 1'b1;
-                    proc_state   <= PROC_CORR_READ;
+                    corr_read_valid <= 1'b0;
+                end
+
+                // Register the product made from the preceding BRAM read.
+                // corr_product_valid is the corresponding valid delay.
+                mult_ei_ri_pipe    <= mult_ei_ri;
+                mult_eq_rq_pipe    <= mult_eq_rq;
+                mult_eq_ri_pipe    <= mult_eq_ri;
+                mult_ei_rq_pipe    <= mult_ei_rq;
+                corr_product_valid <= corr_read_valid;
+
+                // Retire one product per cycle once the pipeline is filled.
+                // The final product is handled identically, then the state
+                // advances to the existing background/difference stages.
+                if (corr_product_valid) begin
+                    if (corr_accum_count == CORR_SAMPLES - 1) begin
+                        corr_sum_re_pipe <= corr_acc_next_re;
+                        corr_sum_im_pipe <= corr_acc_next_im;
+                        corr_acc_re      <= 48'sd0;
+                        corr_acc_im      <= 48'sd0;
+                        corr_accum_count <= 16'd0;
+                        corr_read_valid  <= 1'b0;
+                        corr_product_valid <= 1'b0;
+                        sample_index     <= 16'd0;
+                        proc_state       <= PROC_CORR_DIFF;
+                    end else begin
+                        corr_acc_re      <= corr_acc_next_re;
+                        corr_acc_im      <= corr_acc_next_im;
+                        corr_accum_count <= corr_accum_count + 1'b1;
+                    end
                 end
             end
 
@@ -432,9 +548,18 @@ module lfm_radar_core #(
                         final_peak_score  <= 49'd0;
                         final_left_score  <= 49'd0;
                         final_right_score <= 49'd0;
+                        target_count      <= 3'd0;
+                        proc_state        <= PROC_FINALIZE;
+                    end else begin
+                        lag_index  <= lag_index + 1'b1;
+                        proc_state <= PROC_CORR_READ;
                     end
                 end else begin
                     previous_score <= magnitude_pipe;
+                    // Retain every lag score for the post-correlation
+                    // CFAR/multi-target pass, while preserving legacy peak
+                    // tracking for interpolation compatibility.
+                    lag_scores[lag_index] <= magnitude_pipe;
                     if (magnitude_pipe > max_score) begin
                         max_score         <= magnitude_pipe;
                         max_lag_index     <= lag_index;
@@ -461,19 +586,66 @@ module lfm_radar_core #(
                             final_right_score <= max_waiting_right ?
                                 magnitude_pipe : max_right_score;
                         end
+                        cfar_prefix_index   <= 16'd0;
+                        cfar_running_sum    <= 64'd0;
+                        cfar_index          <= 16'd0;
+                        target_count        <= 3'd0;
+                        cfar_suppress_until <= 16'd0;
+                        proc_state          <= PROC_CFAR_PREFIX;
+                    end else begin
+                        lag_index  <= lag_index + 1'b1;
+                        proc_state <= PROC_CORR_READ;
                     end
                 end
+            end
 
-                if (lag_index == MAX_LAG - 1) begin
+            // Build an inclusive prefix sum of the complete range profile.
+            // This state is deliberately sequential to keep CFAR resources
+            // bounded and to make the profile observable in simulation.
+            if (proc_state == PROC_CFAR_PREFIX) begin
+                if (cfar_prefix_index < MAX_LAG) begin
+                    cfar_prefix[cfar_prefix_index] <= cfar_running_sum;
+                    cfar_running_sum <= cfar_running_sum +
+                                        {{15{1'b0}}, lag_scores[cfar_prefix_index]};
+                    cfar_prefix_index <= cfar_prefix_index + 1'b1;
+                end else begin
+                    cfar_prefix[MAX_LAG] <= cfar_running_sum;
+                    cfar_index <= 16'd0;
+                    proc_state <= PROC_CFAR_SCAN;
+                end
+            end
+
+            // One lag per clock CA-CFAR scan.  A local-maximum test suppresses
+            // broad sidelobes, while cfar_suppress_until implements a simple
+            // non-maximum suppression guard around each accepted target.
+            if (proc_state == PROC_CFAR_SCAN) begin
+                if (cfar_candidate && (cfar_index >= cfar_suppress_until) &&
+                    (target_count < MAX_TARGETS)) begin
+                    target_lag[target_count]   <= cfar_index;
+                    target_score[target_count] <= lag_scores[cfar_index];
+                    target_count                <= target_count + 1'b1;
+                    cfar_suppress_until        <= cfar_index + CFAR_GUARD_CELLS + 1;
+                end
+                if (cfar_index == MAX_LAG - 1) begin
                     proc_state <= PROC_FINALIZE;
                 end else begin
-                    lag_index  <= lag_index + 1'b1;
-                    proc_state <= PROC_CORR_READ;
+                    cfar_index <= cfar_index + 1'b1;
                 end
             end
 
             if (proc_state == PROC_FINALIZE) begin
-                output_word_index    <= 3'd0;
+                // Reconstruct neighbours for the first reported target so
+                // legacy software RCAL/sub-sample interpolation remains
+                // meaningful.  Additional targets carry lag and score only.
+                if (target_count != 0) begin
+                    final_peak_lag   <= target_lag[0];
+                    final_peak_score <= target_score[0];
+                    final_left_score <= (target_lag[0] == 0) ? 49'd0 :
+                                        lag_scores[target_lag[0]-1'b1];
+                    final_right_score <= (target_lag[0] == MAX_LAG-1) ? 49'd0 :
+                                         lag_scores[target_lag[0]+1'b1];
+                end
+                output_word_index    <= 4'd0;
                 m_axis_result_tvalid <= 1'b0;
                 m_axis_result_tlast  <= 1'b0;
                 proc_state           <= PROC_OUTPUT;
@@ -484,16 +656,33 @@ module lfm_radar_core #(
                     m_axis_result_tvalid <= 1'b1;
                     m_axis_result_tlast  <= 1'b0;
                     case (output_word_index)
-                        3'd0: m_axis_result_tdata <= RESULT_MAGIC;
-                        3'd1: m_axis_result_tdata <= {
-                            result_sequence, final_peak_lag
+                        4'd0: m_axis_result_tdata <= RESULT_MAGIC;
+                        // v1 header: [31:24] version, [23:16] target count,
+                        // [15:0] sequence number.
+                        4'd1: m_axis_result_tdata <= {
+                            8'h01, 8'd0 + target_count, result_sequence
                         };
-                        3'd2: m_axis_result_tdata <=
-                            scaled_score(final_peak_score);
-                        3'd3: m_axis_result_tdata <=
-                            scaled_score(final_left_score);
-                        3'd4: m_axis_result_tdata <=
-                            scaled_score(final_right_score);
+                        4'd2: m_axis_result_tdata <= {
+                            29'd0, background_valid, scan_calibrate, enabled
+                        };
+                        4'd3: m_axis_result_tdata <= (target_count > 0) ?
+                            {16'd0, target_lag[0]} : 32'd0;
+                        4'd4: m_axis_result_tdata <= (target_count > 0) ?
+                            scaled_score(target_score[0]) : 32'd0;
+                        4'd5: m_axis_result_tdata <= (target_count > 1) ?
+                            {16'd0, target_lag[1]} : 32'd0;
+                        4'd6: m_axis_result_tdata <= (target_count > 1) ?
+                            scaled_score(target_score[1]) : 32'd0;
+                        4'd7: m_axis_result_tdata <= (target_count > 2) ?
+                            {16'd0, target_lag[2]} : 32'd0;
+                        4'd8: m_axis_result_tdata <= (target_count > 2) ?
+                            scaled_score(target_score[2]) : 32'd0;
+                        4'd9: m_axis_result_tdata <= (target_count > 3) ?
+                            {16'd0, target_lag[3]} : 32'd0;
+                        4'd10: m_axis_result_tdata <= (target_count > 3) ?
+                            scaled_score(target_score[3]) : 32'd0;
+                        4'd11: m_axis_result_tdata <= scaled_score(final_left_score);
+                        4'd12: m_axis_result_tdata <= scaled_score(final_right_score);
                         default: begin
                             m_axis_result_tdata <= {
                                 29'd0, background_valid,
@@ -503,8 +692,8 @@ module lfm_radar_core #(
                         end
                     endcase
 
-                    if (output_word_index == 3'd5) begin
-                        output_word_index <= 3'd0;
+                    if (output_word_index == 4'd13) begin
+                        output_word_index <= 4'd0;
                         result_sequence   <= result_sequence + 1'b1;
                         proc_state        <= PROC_IDLE;
                         scan_calibrate    <= 1'b0;

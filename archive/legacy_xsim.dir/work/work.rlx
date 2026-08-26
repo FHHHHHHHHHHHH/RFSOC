@@ -1,0 +1,7 @@
+0.7
+2020.2
+Nov 18 2020
+09:47:47
+E:/Vivado_prj/ZCU111_V10_DPSK/V10_DPSK/V10_DPSK.srcs/sources_1/new/dbpsk_adc_rx.v,1784125223,systemVerilog,,E:/Vivado_prj/ZCU111_V10_DPSK/sim/tb_dbpsk_loopback.sv,,dbpsk_adc_rx_v10,,,,,,,,
+E:/Vivado_prj/ZCU111_V10_DPSK/V10_DPSK/V10_DPSK.srcs/sources_1/new/dual_dac_dbpsk_tx.v,1784124535,systemVerilog,,E:/Vivado_prj/ZCU111_V10_DPSK/V10_DPSK/V10_DPSK.srcs/sources_1/new/dbpsk_adc_rx.v,,dual_dac_dbpsk_tx,,,,,,,,
+E:/Vivado_prj/ZCU111_V10_DPSK/sim/tb_dbpsk_loopback.sv,1784124865,systemVerilog,,,,tb_dbpsk_loopback,,,,,,,,

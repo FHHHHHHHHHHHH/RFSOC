@@ -63,10 +63,12 @@ module quant_stream_mux (
 
     reg select_signal;
 
-    // 仅在输出通道空闲且当前没有选中信号流时，允许 snapshot 流前进。
-    assign s_snapshot_tready = !m_axis_tvalid && !select_signal;
-    // 仅在输出通道空闲且当前已选中 signal 流时，允许 signal 流前进。
-    assign s_signal_tready = !m_axis_tvalid && select_signal;
+    // 输出寄存器为空，或当前输出会在本周期完成握手时，可以接收下一拍。
+    wire output_ready = !m_axis_tvalid || m_axis_tready;
+
+    // signal 具有更高优先级；snapshot 仅在没有有效 signal 时获得 ready。
+    assign s_signal_tready = output_ready;
+    assign s_snapshot_tready = output_ready && !s_signal_tvalid;
 
     always @(posedge aclk) begin
         if (!aresetn) begin
@@ -74,23 +76,19 @@ module quant_stream_mux (
             m_axis_tvalid <= 0;
             m_axis_tdata <= 0;
             m_axis_tlast <= 0;
-        end else begin
-            if (m_axis_tvalid && m_axis_tready) begin
+        end else if (output_ready) begin
+            if (s_signal_tvalid && s_signal_tready) begin
+                select_signal <= 1;
+                m_axis_tdata <= {{192{1'b0}}, s_signal_tdata};
+                m_axis_tvalid <= 1;
+                m_axis_tlast <= s_signal_tlast;
+            end else if (s_snapshot_tvalid && s_snapshot_tready) begin
+                select_signal <= 0;
+                m_axis_tdata <= s_snapshot_tdata;
+                m_axis_tvalid <= 1;
+                m_axis_tlast <= s_snapshot_tlast;
+            end else begin
                 m_axis_tvalid <= 0;
-            end
-
-            if (!m_axis_tvalid) begin
-                if (s_signal_tvalid) begin
-                    select_signal <= 1;
-                    m_axis_tdata <= {{192{1'b0}}, s_signal_tdata};
-                    m_axis_tvalid <= 1;
-                    m_axis_tlast <= s_signal_tlast;
-                end else if (s_snapshot_tvalid) begin
-                    select_signal <= 0;
-                    m_axis_tdata <= s_snapshot_tdata;
-                    m_axis_tvalid <= 1;
-                    m_axis_tlast <= s_snapshot_tlast;
-                end
             end
         end
     end

@@ -60,7 +60,7 @@ module tb_quant_pipeline_top;
 
     wire         bram_clk;
     wire         bram_en;
-    wire [15:0]  bram_addr;
+    wire [31:0]  bram_addr;
     wire [63:0]  bram_wrdata;
     reg  [63:0]  bram_rddata = 0;
     wire [7:0]   bram_we;
@@ -77,15 +77,48 @@ module tb_quant_pipeline_top;
     end
 
     // 4. Broadcaster (分发给 NN 决策与 MUX)
-    // 模拟 BD 中 axis_broadcaster 逻辑：两路都 ready 时或分别就绪时传输
-    reg  nn_feat_ready_override = 1;
-    wire feat_tvalid = snapshot_tvalid;
-    wire feat_tready;
-    wire [255:0] feat_tdata = snapshot_tdata;
-    wire feat_tlast = snapshot_tlast;
+    // 每个分支对同一个快照只允许握手一次，直到两个分支都完成消费。
+    reg  [255:0] bcast_tdata = 0;
+    reg          bcast_tlast = 0;
+    reg          bcast_valid = 0;
+    reg          nn_pending = 0;
+    reg          mux_pending = 0;
 
+    wire feat_tvalid = bcast_valid && nn_pending;
+    wire feat_tready;
+    wire [255:0] feat_tdata = bcast_tdata;
+    wire feat_tlast = bcast_tlast;
+
+    wire mux_snap_tvalid = bcast_valid && mux_pending;
     wire mux_snap_ready;
-    assign snapshot_tready = feat_tready && mux_snap_ready;
+    wire nn_fire = feat_tvalid && feat_tready;
+    wire mux_fire = mux_snap_tvalid && mux_snap_ready;
+    assign snapshot_tready = !bcast_valid;
+
+    always @(posedge clk) begin
+        if (!rstn) begin
+            bcast_tdata <= 0;
+            bcast_tlast <= 0;
+            bcast_valid <= 0;
+            nn_pending <= 0;
+            mux_pending <= 0;
+        end else if (!bcast_valid) begin
+            if (snapshot_tvalid && snapshot_tready) begin
+                bcast_tdata <= snapshot_tdata;
+                bcast_tlast <= snapshot_tlast;
+                bcast_valid <= 1;
+                nn_pending <= 1;
+                mux_pending <= 1;
+            end
+        end else begin
+            if (nn_fire)
+                nn_pending <= 0;
+            if (mux_fire)
+                mux_pending <= 0;
+            if ((!nn_pending || nn_fire) && (!mux_pending || mux_fire))
+                bcast_valid <= 0;
+        end
+    end
 
     // 5. NN Decision Engine 输出
     wire [63:0]  signal_tdata;
@@ -246,10 +279,10 @@ module tb_quant_pipeline_top;
         .aclk(clk),
         .aresetn(rstn),
 
-        .s_snapshot_tdata(snapshot_tdata),
-        .s_snapshot_tvalid(snapshot_tvalid),
+        .s_snapshot_tdata(bcast_tdata),
+        .s_snapshot_tvalid(mux_snap_tvalid),
         .s_snapshot_tready(mux_snap_ready),
-        .s_snapshot_tlast(snapshot_tlast),
+        .s_snapshot_tlast(bcast_tlast),
 
         .s_signal_tdata(signal_tdata),
         .s_signal_tvalid(signal_tvalid),
@@ -499,8 +532,8 @@ module tb_quant_pipeline_top;
         pkt[55:48]   = 8'h85; // security_id = 5
         pkt[63:56]   = 8'h01; pkt[71:64] = 8'hca; // timestamp = 202
         pkt[79:72]   = 8'h07; pkt[87:80] = 8'hde; // price = 990 ((7<<7)+0x5e)
-        pkt[87:80]   = 8'h87; // quantity = 7
-        pkt[95:88]   = 8'h08; pkt[103:96] = 8'haa; // order_id = 1066 ((8<<7)+0x2a = 1066)
+        pkt[95:88]   = 8'h87; // quantity = 7
+        pkt[103:96]  = 8'h08; pkt[111:104] = 8'haa; // order_id = 1066 ((8<<7)+0x2a = 1066)
         send_raw_beat(pkt, 1'b1);
 
         wait_for_snapshot(res_type, res_trade, res_bidp, res_bidq, res_askp, res_askq);
@@ -528,8 +561,8 @@ module tb_quant_pipeline_top;
         axi_read_reg(8'h04, reg_val, 0);
         check_assert(reg_val >= 32'd5, "场景7: FAST Decoder 统计帧计数寄存器 >= 5");
 
-        // 读取 order_book 冲突计数寄存器 (Offset 3: Collision Count)
-        axi_read_reg(8'h0C, reg_val, 1);
+        // 读取 order_book 冲突计数寄存器 (Offset 2: Collision Count)
+        axi_read_reg(8'h08, reg_val, 1);
         check_assert(reg_val == u_order_book.collision_count, "场景7: OrderBook AXI-Lite 冲突统计寄存器读数准确");
 
         // 读取 nn_decision 推断次数寄存器 (Offset 1: Inference Count)

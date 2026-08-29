@@ -1,0 +1,57 @@
+{
+   "ActiveEmotionalView":"Default View",
+   "Default View_ScaleFactor":"0.587554",
+   "Default View_TopLeft":"2987,-466",
+   "DisplayTieOff":"1",
+   "ExpandedHierarchyInLayout":"",
+   "guistr":"# # String gsaved with Nlview 7.0r6  2020-01-29 bk=1.5227 VDI=41 GEI=36 GUI=JA:10.0 non-TLS
+#  -string -flagsOSRD
+preplace port S_AXIS_RAW -pg 1 -lvl 0 -x -10 -y 310 -defaultsOSRD
+preplace inst zynq_ultra_ps_e_0 -pg 1 -lvl 11 -x 3590 -y 110 -defaultsOSRD
+preplace inst proc_sys_reset_0 -pg 1 -lvl 1 -x 200 -y 560 -defaultsOSRD
+preplace inst axi_smartconnect_ctrl -pg 1 -lvl 12 -x 4050 -y 120 -defaultsOSRD
+preplace inst axi_dma_quant -pg 1 -lvl 9 -x 2730 -y 120 -defaultsOSRD
+preplace inst axi_dwidth_dma -pg 1 -lvl 10 -x 3110 -y 340 -defaultsOSRD
+preplace inst axis_fifo_snapshot -pg 1 -lvl 8 -x 2410 -y 130 -defaultsOSRD
+preplace inst axis_broadcaster_snapshot -pg 1 -lvl 5 -x 1520 -y 340 -defaultsOSRD
+preplace inst blk_mem_kvs -pg 1 -lvl 14 -x 4660 -y 440 -defaultsOSRD
+preplace inst axi_bram_ctrl_kvs -pg 1 -lvl 13 -x 4380 -y 240 -defaultsOSRD
+preplace inst fast_decoder_ip_0 -pg 1 -lvl 2 -x 540 -y 340 -defaultsOSRD
+preplace inst market_event_reorder_0 -pg 1 -lvl 3 -x 830 -y 360 -defaultsOSRD
+preplace inst order_book_engine_ip_0 -pg 1 -lvl 4 -x 1140 -y 400 -defaultsOSRD
+preplace inst nn_decision_engine_ip_0 -pg 1 -lvl 6 -x 1850 -y 80 -defaultsOSRD
+preplace inst quant_stream_mux_0 -pg 1 -lvl 7 -x 2150 -y 110 -defaultsOSRD
+preplace netloc zynq_ultra_ps_e_0_pl_clk0 1 0 13 20 430 370 430 710 440 950 520 1330 170 1680 170 2000 20 2280 20 2540 20 2920 20 3280 10 3900 20 4240J
+preplace netloc zynq_ultra_ps_e_0_pl_resetn0 1 0 12 10 250 NJ 250 NJ 250 NJ 250 NJ 250 1680J 260 NJ 260 NJ 260 NJ 260 2900J 210 NJ 210 3890
+preplace netloc proc_sys_reset_0_peripheral_aresetn 1 1 12 380 440 700 450 960 510 1340 180 1690 180 2020 200 2290 210 2530 270 2930 260 NJ 260 NJ 260 N
+preplace netloc axi_dma_quant_s2mm_introut 1 9 2 2900 150 NJ
+preplace netloc order_book_engine_ip_0_bram_clk 1 4 10 1360 420 NJ 420 NJ 420 NJ 420 NJ 420 NJ 420 NJ 420 NJ 420 NJ 420 NJ
+preplace netloc order_book_engine_ip_0_bram_en 1 4 10 1320 480 NJ 480 NJ 480 NJ 480 NJ 480 NJ 480 NJ 480 NJ 480 NJ 480 NJ
+preplace netloc order_book_engine_ip_0_bram_addr 1 4 10 1350 430 NJ 430 NJ 430 NJ 430 NJ 430 NJ 430 3280J 400 NJ 400 NJ 400 NJ
+preplace netloc order_book_engine_ip_0_bram_wrdata 1 4 10 1310 440 NJ 440 NJ 440 NJ 440 NJ 440 NJ 440 NJ 440 NJ 440 NJ 440 NJ
+preplace netloc blk_mem_kvs_doutb 1 3 11 970 530 1360J 460 NJ 460 NJ 460 NJ 460 NJ 460 NJ 460 NJ 460 NJ 460 NJ 460 N
+preplace netloc order_book_engine_ip_0_bram_we 1 4 10 1310 470 NJ 470 NJ 470 NJ 470 NJ 470 NJ 470 NJ 470 NJ 470 NJ 470 4520J
+preplace netloc proc_sys_reset_0_peripheral_reset 1 1 13 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 NJ 560 4530
+preplace netloc axi_dwidth_dma_M_AXI 1 10 1 3270 70n
+preplace netloc order_book_engine_ip_0_m_axis_snapshot 1 4 1 1360 320n
+preplace netloc axi_smartconnect_ctrl_M01_AXI 1 12 1 4230 100n
+preplace netloc axis_broadcaster_snapshot_M01_AXIS 1 5 2 1690 190 2010J
+preplace netloc nn_decision_engine_ip_0_m_axis_signal 1 6 1 N 80
+preplace netloc axi_bram_ctrl_kvs_BRAM_PORTA 1 13 1 4520 230n
+preplace netloc zynq_ultra_ps_e_0_M_AXI_HPM0_FPD 1 11 1 3890 70n
+preplace netloc fast_decoder_ip_0_m_axis_decoded 1 2 1 N 340
+preplace netloc axis_broadcaster_snapshot_M00_AXIS 1 5 1 1670 50n
+preplace netloc axi_smartconnect_ctrl_M04_AXI 1 5 8 1700 250 NJ 250 NJ 250 NJ 250 NJ 250 NJ 250 NJ 250 4200
+preplace netloc market_event_reorder_0_m_axis 1 3 1 N 360
+preplace netloc S_AXIS_RAW_1 1 0 2 NJ 310 NJ
+preplace netloc axis_fifo_snapshot_M_AXIS 1 8 1 2530 100n
+preplace netloc axi_smartconnect_ctrl_M03_AXI 1 3 10 950 230 NJ 230 NJ 230 NJ 230 NJ 230 NJ 230 NJ 230 NJ 230 NJ 230 4190
+preplace netloc axi_smartconnect_ctrl_M00_AXI 1 8 5 2550 220 NJ 220 NJ 220 NJ 220 4210
+preplace netloc axi_smartconnect_ctrl_M02_AXI 1 1 12 370 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 NJ 240 4220
+preplace netloc quant_stream_mux_0_m_axis 1 7 1 N 110
+preplace netloc axi_dma_quant_M_AXI_S2MM 1 9 1 2910 100n
+levelinfo -pg 1 -10 200 540 830 1140 1520 1850 2150 2410 2730 3110 3590 4050 4380 4660 4800
+pagesize -pg 1 -db -bbox -sgen -150 -10 4800 660
+"
+}
+

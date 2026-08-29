@@ -3025,46 +3025,10 @@
       }
     },
     "interface_nets": {
-      "axi_dwidth_dma_M_AXI": {
+      "axis_broadcaster_snapshot_M00_AXIS": {
         "interface_ports": [
-          "axi_dwidth_dma/M_AXI",
-          "zynq_ultra_ps_e_0/S_AXI_HP0_FPD"
-        ]
-      },
-      "order_book_engine_ip_0_m_axis_snapshot": {
-        "interface_ports": [
-          "order_book_engine_ip_0/m_axis_snapshot",
-          "axis_broadcaster_snapshot/S_AXIS"
-        ]
-      },
-      "axi_smartconnect_ctrl_M01_AXI": {
-        "interface_ports": [
-          "axi_smartconnect_ctrl/M01_AXI",
-          "axi_bram_ctrl_kvs/S_AXI"
-        ]
-      },
-      "axis_broadcaster_snapshot_M01_AXIS": {
-        "interface_ports": [
-          "axis_broadcaster_snapshot/M01_AXIS",
-          "quant_stream_mux_0/s_snapshot"
-        ]
-      },
-      "nn_decision_engine_ip_0_m_axis_signal": {
-        "interface_ports": [
-          "nn_decision_engine_ip_0/m_axis_signal",
-          "quant_stream_mux_0/s_signal"
-        ]
-      },
-      "axi_bram_ctrl_kvs_BRAM_PORTA": {
-        "interface_ports": [
-          "axi_bram_ctrl_kvs/BRAM_PORTA",
-          "blk_mem_kvs/BRAM_PORTA"
-        ]
-      },
-      "zynq_ultra_ps_e_0_M_AXI_HPM0_FPD": {
-        "interface_ports": [
-          "zynq_ultra_ps_e_0/M_AXI_HPM0_FPD",
-          "axi_smartconnect_ctrl/S00_AXI"
+          "axis_broadcaster_snapshot/M00_AXIS",
+          "nn_decision_engine_ip_0/s_axis_feat"
         ]
       },
       "fast_decoder_ip_0_m_axis_decoded": {
@@ -3073,10 +3037,34 @@
           "market_event_reorder_0/s_axis"
         ]
       },
-      "axis_broadcaster_snapshot_M00_AXIS": {
+      "axi_bram_ctrl_kvs_BRAM_PORTA": {
         "interface_ports": [
-          "axis_broadcaster_snapshot/M00_AXIS",
-          "nn_decision_engine_ip_0/s_axis_feat"
+          "axi_bram_ctrl_kvs/BRAM_PORTA",
+          "blk_mem_kvs/BRAM_PORTA"
+        ]
+      },
+      "axi_smartconnect_ctrl_M01_AXI": {
+        "interface_ports": [
+          "axi_smartconnect_ctrl/M01_AXI",
+          "axi_bram_ctrl_kvs/S_AXI"
+        ]
+      },
+      "zynq_ultra_ps_e_0_M_AXI_HPM0_FPD": {
+        "interface_ports": [
+          "zynq_ultra_ps_e_0/M_AXI_HPM0_FPD",
+          "axi_smartconnect_ctrl/S00_AXI"
+        ]
+      },
+      "order_book_engine_ip_0_m_axis_snapshot": {
+        "interface_ports": [
+          "order_book_engine_ip_0/m_axis_snapshot",
+          "axis_broadcaster_snapshot/S_AXIS"
+        ]
+      },
+      "axi_dwidth_dma_M_AXI": {
+        "interface_ports": [
+          "axi_dwidth_dma/M_AXI",
+          "zynq_ultra_ps_e_0/S_AXI_HP0_FPD"
         ]
       },
       "axi_smartconnect_ctrl_M04_AXI": {
@@ -3097,28 +3085,16 @@
           "fast_decoder_ip_0/s_axis_raw"
         ]
       },
-      "axis_fifo_snapshot_M_AXIS": {
+      "axis_broadcaster_snapshot_M01_AXIS": {
         "interface_ports": [
-          "axis_fifo_snapshot/M_AXIS",
-          "axi_dma_quant/S_AXIS_S2MM"
+          "axis_broadcaster_snapshot/M01_AXIS",
+          "quant_stream_mux_0/s_snapshot"
         ]
       },
-      "axi_smartconnect_ctrl_M03_AXI": {
+      "nn_decision_engine_ip_0_m_axis_signal": {
         "interface_ports": [
-          "axi_smartconnect_ctrl/M03_AXI",
-          "order_book_engine_ip_0/s_axi_ctrl"
-        ]
-      },
-      "axi_smartconnect_ctrl_M00_AXI": {
-        "interface_ports": [
-          "axi_smartconnect_ctrl/M00_AXI",
-          "axi_dma_quant/S_AXI_LITE"
-        ]
-      },
-      "axi_smartconnect_ctrl_M02_AXI": {
-        "interface_ports": [
-          "axi_smartconnect_ctrl/M02_AXI",
-          "fast_decoder_ip_0/s_axi_ctrl"
+          "nn_decision_engine_ip_0/m_axis_signal",
+          "quant_stream_mux_0/s_signal"
         ]
       },
       "quant_stream_mux_0_m_axis": {
@@ -3131,6 +3107,30 @@
         "interface_ports": [
           "axi_dma_quant/M_AXI_S2MM",
           "axi_dwidth_dma/S_AXI"
+        ]
+      },
+      "axi_smartconnect_ctrl_M03_AXI": {
+        "interface_ports": [
+          "axi_smartconnect_ctrl/M03_AXI",
+          "order_book_engine_ip_0/s_axi_ctrl"
+        ]
+      },
+      "axi_smartconnect_ctrl_M02_AXI": {
+        "interface_ports": [
+          "axi_smartconnect_ctrl/M02_AXI",
+          "fast_decoder_ip_0/s_axi_ctrl"
+        ]
+      },
+      "axi_smartconnect_ctrl_M00_AXI": {
+        "interface_ports": [
+          "axi_smartconnect_ctrl/M00_AXI",
+          "axi_dma_quant/S_AXI_LITE"
+        ]
+      },
+      "axis_fifo_snapshot_M_AXIS": {
+        "interface_ports": [
+          "axis_fifo_snapshot/M_AXIS",
+          "axi_dma_quant/S_AXIS_S2MM"
         ]
       }
     },
@@ -3146,14 +3146,14 @@
           "fast_decoder_ip_0/aclk",
           "market_event_reorder_0/aclk",
           "order_book_engine_ip_0/aclk",
-          "nn_decision_engine_ip_0/aclk",
-          "quant_stream_mux_0/aclk",
           "axi_bram_ctrl_kvs/s_axi_aclk",
           "axis_broadcaster_snapshot/aclk",
           "axi_dwidth_dma/s_axi_aclk",
           "zynq_ultra_ps_e_0/maxihpm0_fpd_aclk",
           "zynq_ultra_ps_e_0/maxihpm1_fpd_aclk",
-          "zynq_ultra_ps_e_0/saxihp0_fpd_aclk"
+          "zynq_ultra_ps_e_0/saxihp0_fpd_aclk",
+          "nn_decision_engine_ip_0/aclk",
+          "quant_stream_mux_0/aclk"
         ]
       },
       "zynq_ultra_ps_e_0_pl_resetn0": {
@@ -3168,13 +3168,13 @@
           "fast_decoder_ip_0/aresetn",
           "market_event_reorder_0/aresetn",
           "order_book_engine_ip_0/aresetn",
-          "nn_decision_engine_ip_0/aresetn",
-          "quant_stream_mux_0/aresetn",
           "axis_broadcaster_snapshot/aresetn",
           "axi_dma_quant/axi_resetn",
           "axi_dwidth_dma/s_axi_aresetn",
           "axis_fifo_snapshot/s_axis_aresetn",
-          "axi_bram_ctrl_kvs/s_axi_aresetn"
+          "axi_bram_ctrl_kvs/s_axi_aresetn",
+          "nn_decision_engine_ip_0/aresetn",
+          "quant_stream_mux_0/aresetn"
         ]
       },
       "axi_dma_quant_s2mm_introut": {

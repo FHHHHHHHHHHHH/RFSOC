@@ -37,4 +37,9 @@ quant_trading/scripts/run_rtl_sim.ps1
 E:/Xilinx/Vivado/2020.2/bin/vivado.bat -mode batch -nojournal -nolog -notrace -source quant_trading/scripts/synth_core_rtl.tcl
 ```
 
+仿真平台覆盖：
+- `tb_quant_pipeline_top.sv`：全链路端到端综合验证平台（FAST 解码 -> 事件重排序 -> 订单簿维护 -> NN 决策 -> 流多路复用 -> AXI-Lite 寄存器读写与冲突探针）。
+- `tb_fast_orderbook.sv`：FAST/STEP 帧解析与基础单笔建仓。
+- `tb_market_sequence.sv`：时间戳乱序重排与哈希碰撞探针验证。
+
 当前回归输出：基础 STEP 帧 PASS；盘口序列 `PASS sequence snapshots=5 collisions=1`。完整 BD 工程生成脚本会执行 `validate_bd_design` 并生成 `design_quant_wrapper.v`；顶层并行综合受 Windows OOC 文件锁/内存竞争影响时，应使用 `build_quant_trading.tcl` 的单作业模式重跑。

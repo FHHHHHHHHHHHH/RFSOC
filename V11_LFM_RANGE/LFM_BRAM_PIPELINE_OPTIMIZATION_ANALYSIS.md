@@ -1058,20 +1058,54 @@ reference 波形固定，其频谱可以预先计算。FFT 方案复杂度从 `O
 幅度和最大峰输出接口保持不变；`DIFF/MAG/UPDATE` 仍在每个 lag 完成后运行。
 
 该改动只验证单 lane 吞吐，未引入 4-lane BRAM bank 或多个 lag engine，因此
-不能达到 10 kHz 逐脉冲实时。`PROC_CORR_MULT` 和 `PROC_CORR_ACCUM` 状态编码
-暂保留以减少接口/调试扰动，但不再被主流程访问。Vivado `xvlog` 已通过 RTL
-和 testbench 的语法分析；完整 `run_rtl_sim.tcl` 在当前环境因 Vivado
-`librdi_coretasks` 加载时 `bad allocation` 而未能执行。
+不能达到 10 kHz 逐脉冲实时。原先未被主流程访问的 `PROC_CORR_MULT` 和
+`PROC_CORR_ACCUM` 状态声明已删除，不影响状态寄存器接口。Vivado `xvlog` 和
+独立 xsim 回归均已通过，测试结果为目标 `lag 7`。
 
-## 10. 一维 CA-CFAR 与多目标原型（2026-08）
+## 10. 单目标流式 CA-CFAR（2026-09）
 
-在 II=1 单 lane 相关完成之后，RTL 将 128 个原始 49 bit 幅度写入
-`lag_scores`。检测阶段先串行生成 64 bit 前缀和，再以每拍一个 lag 的速率计算
-左右训练窗总和。当前参数为每侧 2 个训练单元、1 个保护单元、噪声均值 2 倍
-门限，并附加 Q16 缩放后的 1000 分绝对底限。候选还必须满足局部最大值条件；
-接受目标后对保护范围做非极大值抑制，按距离顺序最多保存 4 个 lag/score。
+在 II=1 单 lane 相关完成之后，RTL 不再将全部 lag 幅度写入数组，而是使用
+固定 7 点滑动窗口。窗口中心采用每侧 2 个训练单元、1 个保护单元，门限为训练
+单元均值的 2 倍，并附加 Q16 缩放后的 1000 分绝对底限。局部峰值和门限运算先
+在 `PROC_CFAR_EVAL` 寄存，再由 `PROC_CFAR_COMMIT` 只更新最强候选及其左右邻点；
+无 CFAR 候选时回退到相关最大峰。
 
-结果接口由旧 6 word 包升级到版本化 14 word 固定包。软件拒绝未知版本，第一
-目标继续支持 RCAL 和左右邻点抛物线插值，其余目标使用整数 lag 输出。CFAR
-参数当前为 RTL 常量，尚未实现运行期命令配置；目标按 lag 顺序而不是按幅度
-排序；串行除法器的综合资源/时序尚需 Vivado 综合验证。
+该结构移除了 `lag_scores`、前缀和以及多目标寄存器，避免变量索引数组造成的
+大规模 FF/LUT 和高扇出 CE 路径。结果接口保持原始 6 word 包，软件继续使用
+单目标的 RCAL 和左右邻点抛物线插值。完整综合/布线后的资源和 WNS 已在
+Vivado 2020.2 环境中重新验证，见下方发布构建结果。
+
+## 11. 资源优先复核（2026-09-12）
+
+对现有综合 DCP 进行层次化统计，结果如下：
+
+| 层次 | LUT | FF | RAMB36 | RAMB18 | DSP |
+|---|---:|---:|---:|---:|---:|
+| `lfm_radar_core_0` | 3986 | 1594 | 15 | 3 | 4 |
+| `system_ila_1` | 3576 | 5000 | 267 | 0 | 0 |
+| 完整工程 | 15346 | 15175 | 288 | 4 | 4 |
+
+因此资源收益最大的低风险措施是发布构建关闭 `system_ila_1`，而不是把当前
+单 lane 相关改为 4-lane 或 FFT。前者不接触测距数据路径；后两者会增加 DSP、
+RAM、布线和定点缩放复杂度，且 4-lane 单 engine 仍不能满足 10 kHz 逐脉冲处理。
+
+`scripts/build_v11_hardware.tcl` 默认使用无 ILA 的发布模式，并通过
+`V11_KEEP_ILA=1` 保留调试模式。删除 ILA 只发生在 Vivado 构建会话内，脚本
+同时备份/恢复源 BD 和 ILA XCI；因此同一份工程可以在资源优先和在线调试两种
+模式间切换。
+
+## 12. 无 ILA 发布构建实测（2026-09-13）
+
+本轮用无 ILA 发布模式完成了综合、实现、布线和 bitstream/XSA 生成。顶层
+综合资源为 `11574` CLB LUT、`10162` CLB FF、`23` Block RAM Tile 和 `4`
+DSP48E2；放置后为 `11441` LUT、`10548` FF、`23` Block RAM Tile 和 `4`
+DSP48E2。相比包含 ILA 的工程，BRAM 由 `288` Tile 降至 `23` Tile，说明
+主要资源收益来自关闭调试 ILA，相关/CFAR 数据路径保持不变。
+
+最终 routed timing 为 setup WNS `+1.150 ns`、hold WHS `+0.011 ns`，0 个
+时序失败端点。RTL 仿真仍通过 `PASS: calibrated background and detected
+target lag 7`，6-word 单目标结果包接口未改变。
+
+本轮没有替换 `abs48` 的曼哈顿幅度、没有加入 Robertson 近似，也没有改成
+AXI-Lite 控制面：这些变化都需要额外的相位回归、接口验证或不能带来主要资源
+收益，暂不纳入“保持单目标测距精度”的基线。

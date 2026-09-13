@@ -121,3 +121,11 @@ processing time is approximately 16.8 ms and the internal completed range-update
 rate is approximately 59 Hz. This is still above the UART display requirement,
 avoids the previous register/multiplexer explosion and removes the direct
 `reference_mem`-to-`max_score` clock-enable timing path.
+
+## 2026-09-11 单目标 CFAR 与时序修复
+
+- 取消多目标数组、前缀和和非极大值抑制，只保留一个最强 CFAR 候选；无候选时回退到相关最大峰。
+- CFAR 改为固定 7 点滑动窗口（两侧各 2 个训练单元、1 个保护单元），并将门限计算和候选提交拆为两个寄存器状态。
+- 结果包恢复为 6 个 32-bit word，`TLAST` 位于 word 5；`sw/src` 和旧 `sw/RFSOC/src` 副本均已同步。
+- 移除 `lag_scores`、`cfar_prefix` 和可变索引目标寄存器，降低 FF/LUT 及高扇出布线，并切断原 CFAR 扫描 setup 长路径。
+- 本次仅完成 RTL、软件和仿真源修改；需在有 Vivado 许可证的环境中重新综合/布线确认最终 WNS 和资源。

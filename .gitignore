@@ -66,3 +66,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Local reports excluded from the V11 LFM release whitelist
+V11_LFM_RANGE/CODEX_SETUP_REFRESH_ISSUE_REPORT.md

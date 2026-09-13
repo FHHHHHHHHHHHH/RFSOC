@@ -349,16 +349,16 @@
               }
             },
             "interface_nets": {
-              "auto_pc_to_s00_couplers": {
-                "interface_ports": [
-                  "M_AXI",
-                  "auto_pc/M_AXI"
-                ]
-              },
               "s00_couplers_to_auto_pc": {
                 "interface_ports": [
                   "S_AXI",
                   "auto_pc/S_AXI"
+                ]
+              },
+              "auto_pc_to_s00_couplers": {
+                "interface_ports": [
+                  "M_AXI",
+                  "auto_pc/M_AXI"
                 ]
               }
             },
@@ -447,16 +447,16 @@
               }
             },
             "interface_nets": {
-              "s01_couplers_to_auto_pc": {
-                "interface_ports": [
-                  "S_AXI",
-                  "auto_pc/S_AXI"
-                ]
-              },
               "auto_pc_to_s01_couplers": {
                 "interface_ports": [
                   "M_AXI",
                   "auto_pc/M_AXI"
+                ]
+              },
+              "s01_couplers_to_auto_pc": {
+                "interface_ports": [
+                  "S_AXI",
+                  "auto_pc/S_AXI"
                 ]
               }
             },
@@ -567,10 +567,10 @@
               }
             },
             "interface_nets": {
-              "auto_ds_to_auto_pc": {
+              "s02_couplers_to_auto_ds": {
                 "interface_ports": [
-                  "auto_ds/M_AXI",
-                  "auto_pc/S_AXI"
+                  "S_AXI",
+                  "auto_ds/S_AXI"
                 ]
               },
               "auto_pc_to_s02_couplers": {
@@ -579,10 +579,10 @@
                   "auto_pc/M_AXI"
                 ]
               },
-              "s02_couplers_to_auto_ds": {
+              "auto_ds_to_auto_pc": {
                 "interface_ports": [
-                  "S_AXI",
-                  "auto_ds/S_AXI"
+                  "auto_ds/M_AXI",
+                  "auto_pc/S_AXI"
                 ]
               }
             },
@@ -713,6 +713,12 @@
           }
         },
         "interface_nets": {
+          "ps8_0_axi_periph_to_s00_couplers": {
+            "interface_ports": [
+              "S00_AXI",
+              "s00_couplers/S_AXI"
+            ]
+          },
           "ps8_0_axi_periph_to_s01_couplers": {
             "interface_ports": [
               "S01_AXI",
@@ -723,24 +729,6 @@
             "interface_ports": [
               "s00_couplers/M_AXI",
               "xbar/S00_AXI"
-            ]
-          },
-          "xbar_to_m00_couplers": {
-            "interface_ports": [
-              "xbar/M00_AXI",
-              "m00_couplers/S_AXI"
-            ]
-          },
-          "xbar_to_m01_couplers": {
-            "interface_ports": [
-              "xbar/M01_AXI",
-              "m01_couplers/S_AXI"
-            ]
-          },
-          "m01_couplers_to_ps8_0_axi_periph": {
-            "interface_ports": [
-              "M01_AXI",
-              "m01_couplers/M_AXI"
             ]
           },
           "s01_couplers_to_xbar": {
@@ -755,10 +743,10 @@
               "s02_couplers/S_AXI"
             ]
           },
-          "ps8_0_axi_periph_to_s00_couplers": {
+          "m00_couplers_to_ps8_0_axi_periph": {
             "interface_ports": [
-              "S00_AXI",
-              "s00_couplers/S_AXI"
+              "M00_AXI",
+              "m00_couplers/M_AXI"
             ]
           },
           "s02_couplers_to_xbar": {
@@ -767,10 +755,22 @@
               "xbar/S02_AXI"
             ]
           },
-          "m00_couplers_to_ps8_0_axi_periph": {
+          "xbar_to_m00_couplers": {
             "interface_ports": [
-              "M00_AXI",
-              "m00_couplers/M_AXI"
+              "xbar/M00_AXI",
+              "m00_couplers/S_AXI"
+            ]
+          },
+          "m01_couplers_to_ps8_0_axi_periph": {
+            "interface_ports": [
+              "M01_AXI",
+              "m01_couplers/M_AXI"
+            ]
+          },
+          "xbar_to_m01_couplers": {
+            "interface_ports": [
+              "xbar/M01_AXI",
+              "m01_couplers/S_AXI"
             ]
           }
         },
@@ -3081,23 +3081,31 @@
       }
     },
     "interface_nets": {
-      "usp_rf_data_converter_0_m13_axis": {
+      "axis_broadcaster_128_1_m_axis": {
         "interface_ports": [
-          "usp_rf_data_converter_0/m13_axis",
-          "lfm_radar_core_0/ref_q_axis",
-          "system_ila_1/SLOT_3_AXIS"
+          "lfm_radar_core_0/m1_axis",
+          "usp_rf_data_converter_0/s11_axis",
+          "system_ila_1/SLOT_4_AXIS"
         ]
       },
-      "axis_data_fifo_rx_M_AXIS": {
+      "usp_rf_data_converter_0_vout10": {
         "interface_ports": [
-          "axis_data_fifo_rx/M_AXIS",
-          "axi_fifo_mm_s_0/AXI_STR_RXD"
+          "vout10_0",
+          "usp_rf_data_converter_0/vout10"
         ]
       },
-      "dac1_clk_0_1": {
+      "usp_rf_data_converter_0_m11_axis": {
         "interface_ports": [
-          "dac1_clk_0",
-          "usp_rf_data_converter_0/dac1_clk"
+          "usp_rf_data_converter_0/m11_axis",
+          "lfm_radar_core_0/echo_q_axis",
+          "system_ila_1/SLOT_1_AXIS"
+        ]
+      },
+      "usp_rf_data_converter_0_m10_axis": {
+        "interface_ports": [
+          "usp_rf_data_converter_0/m10_axis",
+          "lfm_radar_core_0/echo_i_axis",
+          "system_ila_1/SLOT_0_AXIS"
         ]
       },
       "CLK_IN_D_0_1": {
@@ -3112,35 +3120,16 @@
           "axi_fifo_mm_s_0/S_AXI"
         ]
       },
-      "zynq_ultra_ps_e_0_M_AXI_HPM1_FPD": {
-        "interface_ports": [
-          "zynq_ultra_ps_e_0/M_AXI_HPM1_FPD",
-          "ps8_0_axi_periph/S02_AXI"
-        ]
-      },
-      "usp_rf_data_converter_0_m10_axis": {
-        "interface_ports": [
-          "usp_rf_data_converter_0/m10_axis",
-          "lfm_radar_core_0/echo_i_axis",
-          "system_ila_1/SLOT_0_AXIS"
-        ]
-      },
       "axi_fifo_mm_s_0_AXI_STR_TXD": {
         "interface_ports": [
           "axis_data_fifo_0/S_AXIS",
           "axi_fifo_mm_s_0/AXI_STR_TXD"
         ]
       },
-      "vin1_01_0_1": {
+      "axis_data_fifo_rx_M_AXIS": {
         "interface_ports": [
-          "vin1_01_0",
-          "usp_rf_data_converter_0/vin1_01"
-        ]
-      },
-      "vin1_23_0_1": {
-        "interface_ports": [
-          "vin1_23_0",
-          "usp_rf_data_converter_0/vin1_23"
+          "axis_data_fifo_rx/M_AXIS",
+          "axi_fifo_mm_s_0/AXI_STR_RXD"
         ]
       },
       "jtag_axi_0_M_AXI": {
@@ -3149,50 +3138,16 @@
           "ps8_0_axi_periph/S01_AXI"
         ]
       },
-      "zynq_ultra_ps_e_0_M_AXI_HPM0_FPD": {
-        "interface_ports": [
-          "ps8_0_axi_periph/S00_AXI",
-          "zynq_ultra_ps_e_0/M_AXI_HPM0_FPD"
-        ]
-      },
-      "usp_rf_data_converter_0_m11_axis": {
-        "interface_ports": [
-          "usp_rf_data_converter_0/m11_axis",
-          "lfm_radar_core_0/echo_q_axis",
-          "system_ila_1/SLOT_1_AXIS"
-        ]
-      },
-      "usp_rf_data_converter_0_vout11": {
-        "interface_ports": [
-          "vout11_0",
-          "usp_rf_data_converter_0/vout11"
-        ]
-      },
       "adc1_clk_0_1": {
         "interface_ports": [
           "adc1_clk_0",
           "usp_rf_data_converter_0/adc1_clk"
         ]
       },
-      "lfm_radar_core_0_m_axis_result": {
+      "zynq_ultra_ps_e_0_M_AXI_HPM0_FPD": {
         "interface_ports": [
-          "lfm_radar_core_0/m_axis_result",
-          "axis_data_fifo_rx/S_AXIS",
-          "system_ila_1/SLOT_6_AXIS"
-        ]
-      },
-      "axis_broadcaster_128_1_m_axis": {
-        "interface_ports": [
-          "lfm_radar_core_0/m1_axis",
-          "usp_rf_data_converter_0/s11_axis",
-          "system_ila_1/SLOT_4_AXIS"
-        ]
-      },
-      "usp_rf_data_converter_0_m12_axis": {
-        "interface_ports": [
-          "usp_rf_data_converter_0/m12_axis",
-          "lfm_radar_core_0/ref_i_axis",
-          "system_ila_1/SLOT_2_AXIS"
+          "ps8_0_axi_periph/S00_AXI",
+          "zynq_ultra_ps_e_0/M_AXI_HPM0_FPD"
         ]
       },
       "axis_broadcaster_128_0_m_axis": {
@@ -3202,11 +3157,38 @@
           "system_ila_1/SLOT_5_AXIS"
         ]
       },
+      "usp_rf_data_converter_0_m13_axis": {
+        "interface_ports": [
+          "usp_rf_data_converter_0/m13_axis",
+          "lfm_radar_core_0/ref_q_axis",
+          "system_ila_1/SLOT_3_AXIS"
+        ]
+      },
+      "usp_rf_data_converter_0_m12_axis": {
+        "interface_ports": [
+          "usp_rf_data_converter_0/m12_axis",
+          "lfm_radar_core_0/ref_i_axis",
+          "system_ila_1/SLOT_2_AXIS"
+        ]
+      },
       "axis_data_fifo_0_M_AXIS": {
         "interface_ports": [
           "axis_data_fifo_0/M_AXIS",
           "lfm_radar_core_0/s_axis_ctrl",
           "system_ila_1/SLOT_7_AXIS"
+        ]
+      },
+      "lfm_radar_core_0_m_axis_result": {
+        "interface_ports": [
+          "lfm_radar_core_0/m_axis_result",
+          "axis_data_fifo_rx/S_AXIS",
+          "system_ila_1/SLOT_6_AXIS"
+        ]
+      },
+      "vin1_23_0_1": {
+        "interface_ports": [
+          "vin1_23_0",
+          "usp_rf_data_converter_0/vin1_23"
         ]
       },
       "ps8_0_axi_periph_M00_AXI": {
@@ -3215,10 +3197,28 @@
           "usp_rf_data_converter_0/s_axi"
         ]
       },
-      "usp_rf_data_converter_0_vout10": {
+      "usp_rf_data_converter_0_vout11": {
         "interface_ports": [
-          "vout10_0",
-          "usp_rf_data_converter_0/vout10"
+          "vout11_0",
+          "usp_rf_data_converter_0/vout11"
+        ]
+      },
+      "dac1_clk_0_1": {
+        "interface_ports": [
+          "dac1_clk_0",
+          "usp_rf_data_converter_0/dac1_clk"
+        ]
+      },
+      "vin1_01_0_1": {
+        "interface_ports": [
+          "vin1_01_0",
+          "usp_rf_data_converter_0/vin1_01"
+        ]
+      },
+      "zynq_ultra_ps_e_0_M_AXI_HPM1_FPD": {
+        "interface_ports": [
+          "zynq_ultra_ps_e_0/M_AXI_HPM1_FPD",
+          "ps8_0_axi_periph/S02_AXI"
         ]
       }
     },

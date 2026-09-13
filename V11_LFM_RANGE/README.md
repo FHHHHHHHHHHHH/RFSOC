@@ -181,8 +181,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 - 独立相关核成功推断 16.5 个 Block RAM Tile 和 4 个 DSP48E2；
 - 独立核 setup WNS 为 `+1.984 ns`；
 - `max_score` D/CE slack 分别为 `+4.044 ns` 和 `+3.813 ns`；
-- 完整 routed design 的 setup WNS 为 `+0.828 ns`，hold WHS 为 `+0.010 ns`；
-- bitstream/XSA 已生成；
+- 无 ILA 发布 routed design 的 setup WNS 为 `+1.150 ns`，hold WHS 为 `+0.011 ns`，
+  0 个时序失败端点；
+- 无 ILA 发布 bitstream/XSA 已生成到
+  `V11_LFM_RANGE.runs/impl_1/design_1_wrapper.bit` 和
+  `sw/design_1_wrapper.xsa`，并同步到 Git 跟踪的
+  `design_1_wrapper.xsa`；
 - 同轴线实测中，0.3 m 参考线配合 1.0/2.0/2.3/3.0 m 测量线时，
   lag 分别约为 2/6/7/9，距离变化与约 0.70 的线缆速度因子吻合。
 
@@ -225,22 +229,44 @@ V11_LFM_RANGE/
 
 ## 当前边界和下一步
 
-- 当前只输出最大相关峰，即单目标“最近/最强候选”模式；多目标 CFAR、速度估计和目标跟踪不在 V11 第一阶段范围内。
+- 当前只输出一个最强有效相关候选，即单目标“最近/最强候选”模式；多目标 CFAR、速度估计和目标跟踪不在 V11 第一阶段范围内。
 - 静态背景扣除能消除稳定泄漏，但不能完全抑制 PA 相位噪声、环行器随温漂变化的泄漏或动态多径。自由空间测试时应定期重新 `BGCAL`。
-
-## CA-CFAR 多目标原型（2026-08）
-
-相关器现在保留全部 128 个 lag 的 49 bit 幅度，并在相关结束后执行一维
-CA-CFAR。默认每侧 2 个训练单元、1 个保护单元，门限为训练单元均值的 2 倍，
-同时保留软件 `THRE` 作为结果显示/标定的最低绝对门限。局部峰判断和一个保护
-单元宽度的非极大值抑制最多输出 4 个目标。该实现是资源可控的串行原型：先用
-128 拍生成前缀和，再用约 128 拍完成检测，相比 128 x 8064 点相关开销很小。
-
-AXI 结果包升级为固定 14 word、版本 1：magic、版本/目标数/序号、状态、4 组
-lag/score、第一目标左右邻点以及尾部状态。A53 软件会检查版本，继续用第一目标
-执行 `RCAL` 和亚采样插值，并打印其余通过 `THRE` 的目标。背景校准包目标数为 0。
 - 0.5 m 是高风险近距端点。能否达到取决于环行器隔离、天线振铃、ADC 不饱和以及标定稳定性，而不只取决于数字算法。
 - 当前 10 kHz PRF 是发射脉冲重复率，不是距离结果输出率。相关器只在空闲时接受新采集，当前约输出 59 个结果/秒。
-- 后续吞吐优化优先顺序是：将标量数据通路改成真正 `II=1`，再利用 128-bit BRAM 做 4-lane MAC，然后按目标结果率增加 lag engine 和 ping-pong 采集缓存；严格 10 kHz 逐脉冲测距还应评估 FFT 脉压。
+- 下一阶段吞吐优化可评估 128-bit BRAM 的 4-lane MAC、多个 lag engine 和 ping-pong 采集缓存；严格 10 kHz 逐脉冲测距还应评估 FFT 脉压。
 - 三乘法复数乘法可以节省 25% DSP，但当前单核只使用 4/4272 个 DSP，现阶段 BRAM 读带宽和流水吞吐比 DSP 数量更优先。
 - 如需更低误差，可加入多帧相干/非相干积累、峰形拟合和温漂校准。
+
+## 单目标流式 CA-CFAR（2026-09）
+
+相关器完成每个 lag 后将幅度送入固定 7 点滑动窗口，只对窗口中心执行一次
+CA-CFAR：两侧各 2 个训练单元和 1 个保护单元，门限为训练单元均值的 2 倍，
+并附加 Q16 缩放后的 1000 分绝对底限。评估和提交分成两个寄存器状态，只保留
+最强候选及其左右邻点；没有候选时回退到相关最大峰。这样不再保存 128 个 lag
+数组或多目标结果寄存器，减少 LUT/FF、加法器和可变索引布线，同时缩短原先
+可变索引到结果寄存器的 setup 路径。
+
+AXI 结果包保持原始 6 word 格式：magic、`{sequence, peak_lag}`、峰值、左右
+邻点和 flags，TLAST 位于 word 5。A53 只处理一个目标，继续支持 `RCAL` 和
+亚采样抛物线插值；`THRE` 仍作为软件显示/标定的最低绝对门限。
+
+## 资源优化复核（2026-09-13）
+
+对当前综合 DCP 做层次化统计后，`lfm_radar_core_0` 使用 `15 RAMB36 +
+3 RAMB18 + 4 DSP48E2`，而 `system_ila_1` 单独使用 `267 RAMB36、3576 LUT
+和 5000 FF`。因此发布版本的主要资源收益来自关闭调试 ILA，而不是把单
+lane 相关改成 4-lane 或 FFT；后两者会增加 DSP、RAM 和控制复杂度，且不
+会让当前 10 kHz PRF 达到逐脉冲处理。
+
+无 ILA 发布构建实测：综合为 `11574` CLB LUT、`10162` CLB FF、`23`
+Block RAM Tile、`4` DSP48E2；放置后为 `11441` LUT、`10548` FF、`23`
+Block RAM Tile、`4` DSP48E2。最终 routed timing 为 setup WNS `+1.150 ns`、
+hold WHS `+0.011 ns`，0 个失败端点。
+
+`scripts/build_v11_hardware.tcl` 现在默认在构建会话中移除 `system_ila_1`
+并在结束或失败时恢复 Block Design 源文件及 ILA XCI，以生成低资源发布
+bitstream/XSA。需要
+在线调试时，在 Vivado Tcl 环境中设置 `V11_KEEP_ILA=1` 后再运行脚本。
+该优化不改变 ADC 采集、复相关、单目标 CA-CFAR、三点结果包或 PS 插值
+接口，因此不改变单目标测距精度。未采用 Robertson 幅度近似、4-lane MAC、
+FFT 和 AXI-Lite 替换，原因是它们当前没有足够的精度或资源收益证据。
